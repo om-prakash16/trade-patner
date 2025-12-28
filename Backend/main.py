@@ -329,7 +329,7 @@ def background_scanner():
             h50, l50 = get_high_low(50)
             
             # 1-Day Breakout (Yesterday's High/Low)
-            h1, l1 = get_high_low(1) 
+            h2, l2 = get_high_low(2) # 2-Day High/Low
             h100, l100 = get_high_low(100)
             h52w, l52w = get_high_low(250) # Approx 52 Weeks (Trading Days)
 
@@ -353,6 +353,7 @@ def background_scanner():
                 return "Consolidating" # or None
 
             bo_1 = check_breakout(h1, l1)
+            bo_2 = check_breakout(h2, l2)
             bo_10 = check_breakout(h10, l10)
             bo_30 = check_breakout(h30, l30)
             bo_50 = check_breakout(h50, l50)
@@ -363,6 +364,25 @@ def background_scanner():
             # ATH Breakout: If Day High > PREVIOUS All Time High (and prev > 0)
             if prev_ath > 0 and day_h >= prev_ath:
                 bo_all = "Bullish Breakout"
+
+            # --- Advanced Strategy Logic ---
+            # 1. LOM (Level of Momentum)
+            lom_status = "None"
+            if score > 65 and 0.5 <= change_current <= 3.0:
+                lom_status = "LOM_SHORT"
+            elif score > 70 and change_current > 3.0:
+                lom_status = "LOM_LONG"
+
+            # 2. Contraction (Tight Range with quality)
+            # High turnover/vol check implicit in score or check directly
+            is_contraction = False
+            if abs(change_current) < 0.25 and score > 50:
+                is_contraction = True
+            
+            # 3. Sniper (Oversold Reversal)
+            is_sniper = False
+            if change_current < -2.0 and cur_rsi < 40:
+                is_sniper = True
 
             # Breakout Time Logic
             current_time = datetime.now().strftime("%H:%M:%S")
@@ -402,6 +422,8 @@ def background_scanner():
             new_breakouts = {}
             if bo_1 in ["Bullish Breakout", "Bearish Breakout"]: 
                  new_breakouts["1d"] = find_time("1d", bo_1, h1 if bo_1=="Bullish Breakout" else l1)
+            if bo_2 in ["Bullish Breakout", "Bearish Breakout"]: 
+                 new_breakouts["2d"] = find_time("2d", bo_2, h2 if bo_2=="Bullish Breakout" else l2)
             if bo_10 in ["Bullish Breakout", "Bearish Breakout"]: 
                  new_breakouts["10d"] = find_time("10d", bo_10, h10 if bo_10=="Bullish Breakout" else l10)
             if bo_30 in ["Bullish Breakout", "Bearish Breakout"]: 
@@ -435,17 +457,21 @@ def background_scanner():
                 "dom_current": dom_current, "dom_1d": dom_1d,
                 "dom_2d": dom_2d, "dom_3d": dom_3d,
                 "macd_signal": macd_sig,
+                "lom": lom_status,             # NEW
+                "is_contraction": is_contraction, # NEW
+                "is_sniper": is_sniper,        # NEW
                 "breakout_1d": bo_1,
+                "breakout_2d": bo_2,           # NEW
                 "breakout_10d": bo_10,
                 "breakout_30d": bo_30,
                 "breakout_50d": bo_50,
                 "breakout_100d": bo_100,
                 "breakout_52w": bo_52w,
                 "high_1d": h1, "low_1d": l1,
+                "high_2d": h2, "low_2d": l2,   # NEW
                 "high_10d": h10, "low_10d": l10,
                 "high_30d": h30, "low_30d": l30,
                 "high_50d": h50, "low_50d": l50,
-                "high_100d": h100, "low_100d": l100,
                 "high_100d": h100, "low_100d": l100,
                 "high_52w": h52w, "low_52w": l52w,
                 "breakout_all": bo_all,
