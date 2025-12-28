@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import axios from "axios";
+import { useState, useMemo } from "react";
+import { useMarketData } from "@/hooks/useMarketData";
 import { Filter, ArrowUpDown, Brain, TrendingUp, TrendingDown, Minus, Activity, ArrowUp, ArrowDown, X, SlidersHorizontal } from "lucide-react";
 
 export default function ProScannerPage() {
-    const [data, setData] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
+    const { data: rawData, loading } = useMarketData();
+    const data = rawData as any[]; // Access dynamic backend fields
     const [showFilters, setShowFilters] = useState(false);
 
     // Filters
@@ -35,26 +35,6 @@ export default function ProScannerPage() {
         direction: 'asc',
         mode: 'absolute' // Default: Closest to 0
     });
-
-    const API_URL = "http://localhost:8000";
-
-    useEffect(() => {
-        fetchData();
-        const interval = setInterval(fetchData, 5000); // Poll every 5s
-        return () => clearInterval(interval);
-    }, []);
-
-    const fetchData = async () => {
-        try {
-            const res = await axios.get(`${API_URL}/god-mode`);
-            if (res.data.status === "success") {
-                setData(res.data.data);
-                setLoading(false);
-            }
-        } catch (err) {
-            console.error("Failed to fetch", err);
-        }
-    };
 
     // Handler for Column Header Clicks
     const handleSort = (key: string) => {
