@@ -3,10 +3,12 @@
 import { ArrowUp, ArrowDown, Search } from "lucide-react";
 import { StockData } from "@/lib/types";
 
+import { ReactNode } from "react";
+
 interface DayStatConfig {
     title: string;
     type: "HIGH" | "LOW";
-    icon: any;
+    icon: ReactNode;
 }
 
 export default function DayStatTable({ config, data }: { config: DayStatConfig, data: StockData[] }) {
@@ -60,6 +62,7 @@ export default function DayStatTable({ config, data }: { config: DayStatConfig, 
                         <tr>
                             <th className="px-4 py-2.5 font-bold uppercase text-[10px] tracking-wider">Symbol</th>
                             <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">Price</th>
+                            <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">Vol</th>
                             <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">Target</th>
                             <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">Diff</th>
                         </tr>
@@ -75,6 +78,9 @@ export default function DayStatTable({ config, data }: { config: DayStatConfig, 
                                 </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-slate-400 group-hover:text-slate-200">
                                     {item.ltp.toFixed(1)}
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono text-slate-400 text-[10px]">
+                                    {(item.volume / 10000000).toFixed(2)}Cr
                                 </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-slate-500">
                                     {item.target?.toFixed(1)}

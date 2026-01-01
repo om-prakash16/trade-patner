@@ -27,7 +27,7 @@ import { useSidebar } from "@/context/SidebarContext";
 
 export default function Sidebar() {
     const pathname = usePathname();
-    const { isOpen, closeSidebar } = useSidebar();
+    const { isOpen, closeSidebar, isDesktopOpen } = useSidebar();
 
     // Menu Configuration
     const menuGroups = [
@@ -40,6 +40,7 @@ export default function Sidebar() {
                 { name: "Sector Scope", href: "/stocks/sector-scope" },
                 { name: "Swing Spectrum", href: "/stocks/swing" },
                 { name: "Pro Analytics", href: "/pro" },
+                { name: "Find Stock", href: "/stocks/find" },
             ]
         },
         {
@@ -81,8 +82,8 @@ export default function Sidebar() {
                 />
             )}
 
-            <aside className={`flex flex-col w-72 min-h-screen bg-[#111827] border-r border-slate-800 fixed left-0 top-0 z-50 transition-transform duration-300 md:translate-x-0 ${isOpen ? "translate-x-0" : "-translate-x-full"
-                }`}>
+            <aside className={`flex flex-col w-72 min-h-screen bg-[#111827] border-r border-slate-800 fixed left-0 top-0 z-50 transition-transform duration-300 ${isOpen ? "translate-x-0" : "-translate-x-full"
+                } ${isDesktopOpen ? "md:translate-x-0" : "md:-translate-x-full"}`}>
 
                 {/* Header / Logo Area */}
                 <div className="h-16 flex items-center justify-between px-6 border-b border-slate-800/50">

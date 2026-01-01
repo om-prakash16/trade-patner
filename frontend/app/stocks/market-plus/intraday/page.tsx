@@ -23,7 +23,7 @@ export default function IntradayPage() {
             </div>
 
             {/* Main Beacon */}
-            <div className="grid grid-cols-1 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <BreakoutTable
                     data={data}
                     config={{
@@ -32,7 +32,20 @@ export default function IntradayPage() {
                         key: "breakout_1d",
                         desc: "Immediate Momentum (Prev Day High/Low)",
                         highKey: "high_1d",
-                        lowKey: "low_1d"
+                        lowKey: "low_1d",
+                        timeFrame: "1-DAY"
+                    }}
+                />
+                <BreakoutTable
+                    data={data}
+                    config={{
+                        id: "2d",
+                        title: "2-Day Breakout",
+                        key: "breakout_2d",
+                        desc: "Short Term Continuation",
+                        highKey: "high_2d",
+                        lowKey: "low_2d",
+                        timeFrame: "2-DAY"
                     }}
                 />
             </div>
@@ -59,8 +72,18 @@ export default function IntradayPage() {
                 />
             </div>
 
-            {/* Movers Section (3 Cols) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Movers Section (3 Cols -> 2 Cols with Span) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="md:col-span-2">
+                    <MoverTable
+                        data={data}
+                        config={{
+                            title: "HIGH POW. STOCKS",
+                            type: "POWER",
+                            icon: <div className="text-2xl">🔥</div>
+                        }}
+                    />
+                </div>
                 <MoverTable
                     data={data}
                     config={{
@@ -77,18 +100,6 @@ export default function IntradayPage() {
                         icon: <div className="w-8 h-8 rounded bg-gradient-to-t from-red-500 to-orange-400 flex items-center justify-center text-white"><ArrowDown className="w-5 h-5" /></div>
                     }}
                 />
-
-                {/* On medium screens, this might wrap or we can make it span 2? Let's keep distinct grid for now or span-col-2 on md center */}
-                <div className="md:col-span-2 lg:col-span-1">
-                    <MoverTable
-                        data={data}
-                        config={{
-                            title: "HIGH POW. STOCKS",
-                            type: "POWER",
-                            icon: <div className="text-2xl">🔥</div>
-                        }}
-                    />
-                </div>
             </div>
         </div>
     );

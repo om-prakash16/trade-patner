@@ -109,6 +109,8 @@ export default function BreakoutTable({ config, data }: { config: BreakoutConfig
                         <tr>
                             <th className="px-4 py-2.5 font-bold uppercase text-[10px] tracking-wider">Signal</th>
                             <th className="px-4 py-2.5 font-bold uppercase text-[10px] tracking-wider">Symbol</th>
+                            <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">Price</th>
+                            <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">Level</th>
                             <th
                                 className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right cursor-pointer hover:text-white group"
                                 onClick={() => setSortOrder(prev => prev === "desc" ? "asc" : "desc")}
@@ -118,6 +120,7 @@ export default function BreakoutTable({ config, data }: { config: BreakoutConfig
                                     {sortOrder === "desc" ? <ArrowDown className="w-3 h-3 text-slate-500 group-hover:text-white" /> : <ArrowUp className="w-3 h-3 text-slate-500 group-hover:text-white" />}
                                 </div>
                             </th>
+                            <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">Vol</th>
                             <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">Time</th>
                         </tr>
                     </thead>
@@ -125,7 +128,9 @@ export default function BreakoutTable({ config, data }: { config: BreakoutConfig
                         {sorted.length > 0 ? sorted.map((item) => {
                             const status = item[config.key];
                             const timeId = config.id.toLowerCase();
-                            const breakoutTime = item.breakout_times?.[timeId] || "--:--";
+                            const rawTime = item.breakout_times?.[timeId] || item.scan_full_time || item.scan_time || "--:--";
+                            // If it's a full Date-Time (YYYY-MM-DD HH:MM:SS), split it. If just Time, use it.
+                            const breakoutTime = rawTime.includes(" ") ? rawTime.split(" ")[1].slice(0, 5) : rawTime.slice(0, 5);
 
                             return (
                                 <tr key={item.token} className="group hover:bg-slate-800/40 transition-colors cursor-default">
@@ -138,10 +143,21 @@ export default function BreakoutTable({ config, data }: { config: BreakoutConfig
                                             <span className="font-bold text-slate-300 group-hover:text-white transition-colors">{item.symbol}</span>
                                         </div>
                                     </td>
+                                    <td className="px-3 py-2.5 text-right font-mono text-slate-300 font-bold">
+                                        {item.ltp.toFixed(2)}
+                                    </td>
+                                    <td className="px-3 py-2.5 text-right font-mono text-slate-500 text-[10px]">
+                                        {status.includes("Bullish")
+                                            ? Number(item[config.highKey]).toFixed(2)
+                                            : Number(item[config.lowKey]).toFixed(2)}
+                                    </td>
                                     <td className="px-3 py-2.5 text-right font-bold">
                                         <span className={`px-1.5 py-0.5 rounded ${item.change_pct >= 0 ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"}`}>
                                             {item.change_pct > 0 ? "+" : ""}{item.change_pct.toFixed(2)}%
                                         </span>
+                                    </td>
+                                    <td className="px-3 py-2.5 text-right font-mono text-slate-400 text-[10px]">
+                                        {(item.volume / 10000000).toFixed(2)}Cr
                                     </td>
                                     <td className={`px-3 py-2.5 text-right font-mono text-[10px] font-bold ${breakoutTime !== "--:--" ? "text-slate-300" : "text-slate-600"}`}>
                                         {breakoutTime}

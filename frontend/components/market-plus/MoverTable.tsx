@@ -3,10 +3,12 @@
 import { ArrowUp, ArrowDown, Search } from "lucide-react";
 import { StockData } from "@/lib/types";
 
+import { ReactNode } from "react";
+
 interface MoverConfig {
     title: string;
     type: "GAINER" | "LOSER" | "POWER";
-    icon: any;
+    icon: ReactNode;
 }
 
 export default function MoverTable({ config, data }: { config: MoverConfig, data: StockData[] }) {
@@ -20,8 +22,8 @@ export default function MoverTable({ config, data }: { config: MoverConfig, data
 
     const getRightColumn = (item: StockData) => {
         if (config.type === "POWER") {
-            // Turnover
-            return (item.turnover / 10000000).toFixed(2) + " Cr";
+            // Turnover (Already in Cr from backend)
+            return item.turnover.toFixed(2) + " Cr";
         }
         // R.Fac (Strength Score / 10 proxy)
         const rfac = (item.strength_score / 10).toFixed(2);
@@ -60,6 +62,7 @@ export default function MoverTable({ config, data }: { config: MoverConfig, data
                             <th className="px-4 py-2.5 font-bold uppercase text-[10px] tracking-wider">Symbol</th>
                             <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">Price</th>
                             <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">%</th>
+                            <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">Vol</th>
                             <th className="px-3 py-2.5 font-bold uppercase text-[10px] tracking-wider text-right">{getRightHeader()}</th>
                         </tr>
                     </thead>
@@ -79,6 +82,9 @@ export default function MoverTable({ config, data }: { config: MoverConfig, data
                                     <span className={`px-1.5 py-0.5 rounded ${item.change_pct >= 0 ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"}`}>
                                         {item.change_pct > 0 ? "+" : ""}{item.change_pct.toFixed(2)}%
                                     </span>
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono text-slate-400 text-[10px]">
+                                    {(item.volume / 10000000).toFixed(2)}Cr
                                 </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-slate-400">
                                     {getRightColumn(item)}

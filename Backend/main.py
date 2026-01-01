@@ -17,6 +17,7 @@ from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 try:
     from .tokens import NIFTY_50_TOKENS
     from .scrip_master import ScripMaster
+    from .broker.upstox import UpstoxBroker
 except ImportError:
     from tokens import NIFTY_50_TOKENS
     from scrip_master import ScripMaster
@@ -60,6 +61,19 @@ def upstox_callback(code: str):
         return {"status": "success", "message": "Upstox Authenticated"}
     else:
         raise HTTPException(status_code=400, detail="Authentication Failed")
+
+@app.get("/upstox/test/{symbol}")
+def test_upstox_data(symbol: str):
+    """
+    Test Upstox Historical Data Fetch
+    """
+    try:
+        data = upstox_broker.get_historical_data(symbol, "1d")
+        if data:
+            return {"status": "success", "count": len(data), "latest": data[-1]}
+        return {"status": "error", "message": "No Data or Instrument Key Not Found"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.get("/login")
 def login():
@@ -166,6 +180,15 @@ try:
 except Exception as e:
     print(f"Failed to load tracker: {e}")
 
+strategy_tracker = {} # Symbol -> { "LOM_SHORT": "HH:MM", ... }
+try:
+    if os.path.exists("strategy_tracker.json"):
+        with open("strategy_tracker.json", "r") as f:
+            strategy_tracker = json.load(f)
+            print(f"Loaded Strategy Tracker: {len(strategy_tracker)} symbols")
+except Exception as e:
+    print(f"Failed to load strategy tracker: {e}")
+
 # Global ATH Cache
 ath_cache = {} # Symbol -> Price
 try:
@@ -193,7 +216,7 @@ def start_websocket():
         def on_data(wsapp, message):
             # print("Ticks:", message)
             if 'token' in message and 'last_traded_price' in message:
-                print(f"WS Tick: {message['token']} -> {message['last_traded_price']}")
+                # print(f"WS Tick: {message['token']} -> {message['last_traded_price']}")
                 tok = message['token']
                 # Clean token (sometimes comes with quotes or extra chars?) - usually clean string
                 
@@ -247,247 +270,441 @@ def background_scanner():
     global is_scanner_running, market_cache
     print("Scanner: Started")
     
-            # Define Processing Logic Internal to Scanner (or move global)
-    def calculate_metrics(symbol, token, hist_data, ath_val=0, time_finder_func=None):
-        try:
-            if len(hist_data) < 5: return None
-            
-            c0 = hist_data[-1][4]
-            c1 = hist_data[-2][4]
-            c2 = hist_data[-3][4]
-            c3 = hist_data[-4][4]
-            
-            change_current = ((c0 - c1) / c1) * 100
-            change_1d = ((c1 - c2) / c2) * 100
-            change_2d = ((c2 - c3) / c3) * 100
-            change_3d = ((c3 - hist_data[-5][4]) / hist_data[-5][4]) * 100
-            
-            avg_3d = (change_current + change_1d + change_2d + change_3d) / 4.0
-            
-            # Dom
-            def get_dom(candle): return "Buyers" if candle[4] > candle[1] else "Sellers"
-            dom_current = get_dom(hist_data[-1])
-            dom_1d = get_dom(hist_data[-2])
-            dom_2d = get_dom(hist_data[-3])
-            dom_3d = get_dom(hist_data[-4])
-            
-            bulls = [dom_current, dom_1d, dom_2d, dom_3d].count("Buyers")
-            avg_dom_3d = "Buyers" if bulls >= 3 else "Sellers" if bulls <= 1 else "Balance"
-            
-            # Indicators
-            prices = [x[4] for x in hist_data]
-            s = pd.Series(prices)
-            
-            # RSI
-            delta = s.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            cur_rsi = rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50
-            
-            # MACD
-            e12 = s.ewm(span=12, adjust=False).mean()
-            e26 = s.ewm(span=26, adjust=False).mean()
-            macd = e12 - e26
-            sig = macd.ewm(span=9, adjust=False).mean()
-            hist = macd - sig
-            
-            h_val = hist.iloc[-1]
-            h_prev = hist.iloc[-2]
-            
-            macd_sig = "Neutral"
-            if h_val > 0: macd_sig = "Bullish Growing" if h_val > h_prev else "Bullish Waning"
-            elif h_val < 0: macd_sig = "Bearish Growing" if h_val < h_prev else "Bearish Waning"
-            
-            # Score
-            score = 50
-            if cur_rsi > 50: score += 10
-            if cur_rsi > 70: score -= 5
-            if macd.iloc[-1] > sig.iloc[-1]: score += 15
-            if change_current > 0: score += 10
-            if dom_current == "Buyers": score += 5
-            sentiment = "Neutral"
-            if score > 75: sentiment = "STRONG BUY"
-            elif score > 60: sentiment = "Bullish"
-            elif score < 30: sentiment = "STRONG SELL"
-            elif score < 40: sentiment = "Bearish"
+# --- METRICS CALCULATION (Global for Resume) ---
+def calculate_metrics(symbol, token, hist_data, ath_val=0, time_finder_func=None):
+    try:
+        if len(hist_data) < 5: return None
+        
+        c0 = hist_data[-1][4]
+        c1 = hist_data[-2][4]
+        c2 = hist_data[-3][4]
+        c3 = hist_data[-4][4]
+        
+        change_current = ((c0 - c1) / c1) * 100
+        change_1d = ((c1 - c2) / c2) * 100
+        change_2d = ((c2 - c3) / c3) * 100
+        change_3d = ((c3 - hist_data[-5][4]) / hist_data[-5][4]) * 100
+        
+        avg_3d = (change_current + change_1d + change_2d + change_3d) / 4.0
+        
+        # Dom
+        def get_dom(candle): return "Buyers" if candle[4] > candle[1] else "Sellers"
+        dom_current = get_dom(hist_data[-1])
+        dom_1d = get_dom(hist_data[-2])
+        dom_2d = get_dom(hist_data[-3])
+        dom_3d = get_dom(hist_data[-4])
+        
+        bulls = [dom_current, dom_1d, dom_2d, dom_3d].count("Buyers")
+        avg_dom_3d = "Buyers" if bulls >= 3 else "Sellers" if bulls <= 1 else "Balance"
+        
+        # Indicators
+        prices = [x[4] for x in hist_data]
+        s = pd.Series(prices)
+        
+        # RSI
+        delta = s.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        cur_rsi = rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50
+        
+        # MACD
+        e12 = s.ewm(span=12, adjust=False).mean()
+        e26 = s.ewm(span=26, adjust=False).mean()
+        macd = e12 - e26
+        sig = macd.ewm(span=9, adjust=False).mean()
+        hist = macd - sig
+        
+        h_val = hist.iloc[-1]
+        h_prev = hist.iloc[-2]
+        
+        macd_sig = "Neutral"
+        if h_val > 0: macd_sig = "Bullish Growing" if h_val > h_prev else "Bullish Waning"
+        elif h_val < 0: macd_sig = "Bearish Growing" if h_val < h_prev else "Bearish Waning"
+        
+        # --- Advanced Strength Score (0-100) ---
+        # 1. Trend (40 pts)
+        ema20 = s.ewm(span=20, adjust=False).mean().iloc[-1]
+        ema50 = s.ewm(span=50, adjust=False).mean().iloc[-1]
+        
+        trend_score = 0
+        if c0 > ema50: trend_score += 20
+        if c0 > ema20: trend_score += 10
+        # Higher Highs check (vs 10d high excluding today)
+        h10_prev = max([x[2] for x in hist_data[-11:-1]]) if len(hist_data) >= 12 else c0
+        if c0 > h10_prev: trend_score += 10
+        
+        # 2. Momentum (40 pts) - RSI & MACD
+        mom_score = 0
+        # RSI
+        if 50 <= cur_rsi <= 70: mom_score += 20
+        elif cur_rsi > 70: mom_score += 10 # Overbought but strong
+        else: mom_score += 0 # Bearish
+        
+        # MACD
+        if macd.iloc[-1] > sig.iloc[-1]: mom_score += 10
+        if hist.iloc[-1] > 0 and hist.iloc[-1] > hist.iloc[-2]: mom_score += 10 # Growing Bullish
+        
+        # 3. Volume/Price Action (20 pts)
+        vol_score = 0
+        if dom_current == "Buyers": vol_score += 10
+        
+        # Avg Vol Check
+        vols = [x[5] for x in hist_data] # Volume is index 5
+        avg_vol_10 = sum(vols[-11:-1]) / 10 if len(vols) >= 11 else vols[-1]
+        if vols[-1] > avg_vol_10: vol_score += 10
+        
+        score = trend_score + mom_score + vol_score
+        
+        sentiment = "Neutral"
+        if score >= 80: sentiment = "STRONG BUY"
+        elif score >= 60: sentiment = "Bullish"
+        elif score <= 20: sentiment = "STRONG SELL"
+        elif score <= 40: sentiment = "Bearish"
 
-            # Breakout Calculations (10, 30, 50 Days)
-            def get_high_low(period):
-                # Need period+1 candles (hist_data[-1] is c0/today, we need previous)
-                if len(hist_data) < period + 2: return None, None
-                past_data = hist_data[-(period+1):-1]
-                if not past_data: return None, None
-                
-                max_h = max([x[2] for x in past_data])
-                min_l = min([x[3] for x in past_data])
-                return max_h, min_l
-
-            h10, l10 = get_high_low(10)
-            h30, l30 = get_high_low(30)
-            h50, l50 = get_high_low(50)
+        # Breakout Calculations (10, 30, 50 Days)
+        def get_high_low(period):
+            # Need period+1 candles (hist_data[-1] is c0/today, we need previous)
+            if len(hist_data) < period + 2: return None, None
+            past_data = hist_data[-(period+1):-1]
+            if not past_data: return None, None
             
-            # 1-Day Breakout (Yesterday's High/Low)
-            h2, l2 = get_high_low(2) # 2-Day High/Low
-            h100, l100 = get_high_low(100)
-            h52w, l52w = get_high_low(250) # Approx 52 Weeks (Trading Days)
+            max_h = max([x[2] for x in past_data])
+            min_l = min([x[3] for x in past_data])
+            return max_h, min_l
 
-            # All Time High Check
-            # Use passed ath_val (which is max of Cache + History)
-            prev_ath = ath_val
-            new_ath = prev_ath
+        h10, l10 = get_high_low(10)
+        h30, l30 = get_high_low(30)
+        h50, l50 = get_high_low(50)
+        
+        # 1-Day Breakout (Yesterday's High/Low)
+        h1, l1 = get_high_low(1) # 1-Day High/Low
+        h2, l2 = get_high_low(2) # 2-Day High/Low
+        h100, l100 = get_high_low(100)
+        h52w, l52w = get_high_low(250) # Approx 52 Weeks (Trading Days)
+
+        # All Time High Check
+        # Use passed ath_val (which is max of Cache + History)
+        prev_ath = ath_val
+        new_ath = prev_ath
+        
+        # Daily Day High/Low (Index 2 and 3)
+        day_h = hist_data[-1][2]
+        day_l = hist_data[-1][3]
+        
+        # If current price breaks this, update it temporarily for this check
+        if c0 > new_ath: new_ath = c0
+        if day_h > new_ath: new_ath = day_h # Check if high broke it
+
+        def check_breakout(max_h, min_l):
+            # Trigger on HIGH for Bullish, LOW for Bearish (Intraday Detection)
+            if max_h and day_h > max_h: return "Bullish Breakout"
+            if min_l and day_l < min_l: return "Bearish Breakout"
+            return "Consolidating" # or None
+
+        bo_1 = check_breakout(h1, l1)
+        bo_2 = check_breakout(h2, l2)
+        bo_10 = check_breakout(h10, l10)
+        bo_30 = check_breakout(h30, l30)
+        bo_50 = check_breakout(h50, l50)
+        bo_100 = check_breakout(h100, l100)
+        bo_52w = check_breakout(h52w, l52w)
+        
+        bo_all = "Consolidating"
+        # ATH Breakout: If Day High > PREVIOUS All Time High (and prev > 0)
+        if prev_ath > 0 and day_h >= prev_ath:
+            bo_all = "Bullish Breakout"
+
+        # --- Advanced Strategy Logic ---
+        # 1. LOM (Level of Momentum)
+        lom_status = "None"
+        
+        # Bullish LOM (Price Action Focus for persistent component consistency)
+        if 0.5 <= change_current <= 3.0:
+            lom_status = "LOM_SHORT"
+        elif change_current > 3.0:
+            lom_status = "LOM_LONG"
+
+        # Simple Price-Action LOM Bear (regardless of score for now, or maybe score < 40)
+        if -3.0 <= change_current <= -0.5:
+                if lom_status == "None": lom_status = "LOM_SHORT_BEAR"
+        elif change_current < -3.0:
+                if lom_status == "None": lom_status = "LOM_LONG_BEAR"
+
+        # 2. Contraction (Tight Range with quality)
+        is_contraction = False
+        if abs(change_current) < 0.25 and score > 50:
+            is_contraction = True
+        
+        # 3. Sniper (Oversold Reversal)
+        is_sniper = False
+        if change_current < -2.0 and cur_rsi < 40:
+            is_sniper = True
+
+        # Breakout Time Logic
+        now = datetime.now()
+        market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+        
+        if now > market_close:
+            scan_dt = market_close
+        else:
+            scan_dt = now
+        
+        final_dt = scan_dt
             
-            # Daily Day High/Low (Index 2 and 3)
-            day_h = hist_data[-1][2]
-            day_l = hist_data[-1][3]
+        current_time = final_dt.strftime("%H:%M:%S") # For Breakouts (Compact)
+        current_full_time = final_dt.strftime("%Y-%m-%d %H:%M:%S") # For Strategies (Full)
+        
+        # Helper to find precise time if allowed
+        def find_time(tf, status, level):
+            # 1. Check Global Tracker first
+            # NOTE: Global usage here might be tricky if thread-safety is concern or if running ad-hoc
+            # For Ad-Hoc analysis we likely won't find it in global tracker unless it's tracked.
+            existing = breakout_tracker.get(symbol, {}).get(tf)
+            if existing: return existing
             
-            # If current price breaks this, update it temporarily for this check
-            if c0 > new_ath: new_ath = c0
-            if day_h > new_ath: new_ath = day_h # Check if high broke it
+            # 2. If not existing, try to find it
+            if time_finder_func and status in ["Bullish Breakout", "Bearish Breakout"]:
+                try:
+                        # Get date from the breakout candle (last daily candle)
+                        last_candle_time = hist_data[-1][0] 
+                        dt_obj = None
+                        if 'T' in last_candle_time:
+                            dt_obj = datetime.strptime(last_candle_time.split("T")[0], "%Y-%m-%d")
+                        else:
+                            dt_obj = datetime.strptime(last_candle_time[:10], "%Y-%m-%d")
 
-            def check_breakout(max_h, min_l):
-                # Trigger on HIGH for Bullish, LOW for Bearish (Intraday Detection)
-                if max_h and day_h > max_h: return "Bullish Breakout"
-                if min_l and day_l < min_l: return "Bearish Breakout"
-                return "Consolidating" # or None
-
-            bo_1 = check_breakout(h1, l1)
-            bo_2 = check_breakout(h2, l2)
-            bo_10 = check_breakout(h10, l10)
-            bo_30 = check_breakout(h30, l30)
-            bo_50 = check_breakout(h50, l50)
-            bo_100 = check_breakout(h100, l100)
-            bo_52w = check_breakout(h52w, l52w)
+                        is_bull = status == "Bullish Breakout"
+                        found = time_finder_func(symbol, token, level, is_bull, date_obj=dt_obj)
+                        if found: return found
+                except:
+                    pass
             
-            bo_all = "Consolidating"
-            # ATH Breakout: If Day High > PREVIOUS All Time High (and prev > 0)
-            if prev_ath > 0 and day_h >= prev_ath:
-                bo_all = "Bullish Breakout"
-
-            # --- Advanced Strategy Logic ---
-            # 1. LOM (Level of Momentum)
-            lom_status = "None"
-            if score > 65 and 0.5 <= change_current <= 3.0:
-                lom_status = "LOM_SHORT"
-            elif score > 70 and change_current > 3.0:
-                lom_status = "LOM_LONG"
-
-            # 2. Contraction (Tight Range with quality)
-            # High turnover/vol check implicit in score or check directly
-            is_contraction = False
-            if abs(change_current) < 0.25 and score > 50:
-                is_contraction = True
-            
-            # 3. Sniper (Oversold Reversal)
-            is_sniper = False
-            if change_current < -2.0 and cur_rsi < 40:
-                is_sniper = True
-
-            # Breakout Time Logic
-            current_time = datetime.now().strftime("%H:%M:%S")
-            
-            # Helper to find precise time if allowed
-            def find_time(tf, status, level):
-                # 1. Check Global Tracker first
-                existing = breakout_tracker.get(symbol, {}).get(tf)
-                if existing: return existing
-                
-                # 2. If not existing, try to find it
-                if time_finder_func and status in ["Bullish Breakout", "Bearish Breakout"]:
-                    try:
-                         # Get date from the breakout candle (last daily candle)
-                         # hist_data format: [timestamp_str, open, high, low, close, vol]
-                         last_candle_time = hist_data[-1][0] 
-                         # Angel format: "2024-12-28T09:15:00+05:30"
-                         # We need to parse this to datetime
-                         dt_obj = None
-                         if 'T' in last_candle_time:
-                             dt_obj = datetime.strptime(last_candle_time.split("T")[0], "%Y-%m-%d")
-                         else:
-                             # Fallback parse?
-                             dt_obj = datetime.strptime(last_candle_time[:10], "%Y-%m-%d")
-
-                         is_bull = status == "Bullish Breakout"
-                         found = time_finder_func(symbol, token, level, is_bull, date_obj=dt_obj)
-                         if found: return found
-                    except:
-                        pass
-                
-                # 3. Fallback to Scan Time - user requested strictly NO fake times.
-                # If we couldn't find it in intraday (maybe data lag?), return None.
-                # This ensures we keep trying in next scans until we find it.
-                return None
-
-            new_breakouts = {}
-            if bo_1 in ["Bullish Breakout", "Bearish Breakout"]: 
-                 new_breakouts["1d"] = find_time("1d", bo_1, h1 if bo_1=="Bullish Breakout" else l1)
-            if bo_2 in ["Bullish Breakout", "Bearish Breakout"]: 
-                 new_breakouts["2d"] = find_time("2d", bo_2, h2 if bo_2=="Bullish Breakout" else l2)
-            if bo_10 in ["Bullish Breakout", "Bearish Breakout"]: 
-                 new_breakouts["10d"] = find_time("10d", bo_10, h10 if bo_10=="Bullish Breakout" else l10)
-            if bo_30 in ["Bullish Breakout", "Bearish Breakout"]: 
-                 new_breakouts["30d"] = find_time("30d", bo_30, h30 if bo_30=="Bullish Breakout" else l30)
-            if bo_50 in ["Bullish Breakout", "Bearish Breakout"]: 
-                 new_breakouts["50d"] = find_time("50d", bo_50, h50 if bo_50=="Bullish Breakout" else l50)
-            if bo_100 in ["Bullish Breakout", "Bearish Breakout"]: 
-                 new_breakouts["100d"] = find_time("100d", bo_100, h100 if bo_100=="Bullish Breakout" else l100)
-            if bo_52w in ["Bullish Breakout", "Bearish Breakout"]: 
-                 new_breakouts["52w"] = find_time("52w", bo_52w, h52w if bo_52w=="Bullish Breakout" else l52w)
-            # Find time against PREV ATH
-            if bo_all == "Bullish Breakout": 
-                 new_breakouts["all"] = find_time("all", bo_all, prev_ath)
-
-            # We don't read/write global breakout_tracker here to ensure thread safety
-            # Instead, we return detected breakouts to the main thread
-
-            return {
-                "scan_time": current_time,
-                "new_breakouts": new_breakouts, # Pass to main thread
-                "symbol": symbol, "token": token, "ltp": c0,
-                "change_pct": round(change_current, 2),
-                "rsi": round(cur_rsi, 2), "strength_score": round(score, 1),
-                "sentiment": sentiment,
-                "change_current": round(change_current, 2),
-                "change_1d": round(change_1d, 2),
-                "change_2d": round(change_2d, 2),
-                "change_3d": round(change_3d, 2),
-                "avg_3d": round(avg_3d, 2),
-                "avg_dom_3d": avg_dom_3d,
-                "dom_current": dom_current, "dom_1d": dom_1d,
-                "dom_2d": dom_2d, "dom_3d": dom_3d,
-                "macd_signal": macd_sig,
-                "lom": lom_status,             # NEW
-                "is_contraction": is_contraction, # NEW
-                "is_sniper": is_sniper,        # NEW
-                "breakout_1d": bo_1,
-                "breakout_2d": bo_2,           # NEW
-                "breakout_10d": bo_10,
-                "breakout_30d": bo_30,
-                "breakout_50d": bo_50,
-                "breakout_100d": bo_100,
-                "breakout_52w": bo_52w,
-                "high_1d": h1, "low_1d": l1,
-                "high_2d": h2, "low_2d": l2,   # NEW
-                "high_10d": h10, "low_10d": l10,
-                "high_30d": h30, "low_30d": l30,
-                "high_50d": h50, "low_50d": l50,
-                "high_100d": h100, "low_100d": l100,
-                "high_52w": h52w, "low_52w": l52w,
-                "breakout_all": bo_all,
-                "high_all": new_ath,
-                "day_high": day_h,
-                "day_low": day_l,
-                "volume": hist_data[-1][5],
-                "turnover": (c0 * hist_data[-1][5]) / 10000000, # Turnover in Cr
-                # Signal to main thread if we found a new ATH to save
-                "update_ath": new_ath if new_ath > prev_ath else None
-            }
-        except Exception as e:
-            print(f"Metrics Error {symbol}: {e}")
-            import traceback
-            traceback.print_exc()
+            # 3. Fallback
             return None
+
+        new_breakouts = {}
+        if bo_1 in ["Bullish Breakout", "Bearish Breakout"]: 
+                new_breakouts["1d"] = find_time("1d", bo_1, h1 if bo_1=="Bullish Breakout" else l1) or current_full_time
+        if bo_2 in ["Bullish Breakout", "Bearish Breakout"]: 
+                new_breakouts["2d"] = find_time("2d", bo_2, h2 if bo_2=="Bullish Breakout" else l2) or current_full_time
+        if bo_10 in ["Bullish Breakout", "Bearish Breakout"]: 
+                new_breakouts["10d"] = find_time("10d", bo_10, h10 if bo_10=="Bullish Breakout" else l10) or current_full_time
+        if bo_30 in ["Bullish Breakout", "Bearish Breakout"]: 
+                new_breakouts["30d"] = find_time("30d", bo_30, h30 if bo_30=="Bullish Breakout" else l30) or current_full_time
+        if bo_50 in ["Bullish Breakout", "Bearish Breakout"]: 
+                new_breakouts["50d"] = find_time("50d", bo_50, h50 if bo_50=="Bullish Breakout" else l50) or current_full_time
+        if bo_100 in ["Bullish Breakout", "Bearish Breakout"]: 
+                new_breakouts["100d"] = find_time("100d", bo_100, h100 if bo_100=="Bullish Breakout" else l100) or current_full_time
+        if bo_52w in ["Bullish Breakout", "Bearish Breakout"]: 
+                new_breakouts["52w"] = find_time("52w", bo_52w, h52w if bo_52w=="Bullish Breakout" else l52w) or current_full_time
+        # Find time against PREV ATH
+        if bo_all == "Bullish Breakout": 
+                new_breakouts["all"] = find_time("all", bo_all, prev_ath) or current_full_time
+                
+        # --- EXACT EVENT TIME LOGIC (LOM / Reversal) ---
+        strategy_hits = {} # Local container to return to main thread
+        
+        # Calculate Prev Close to determine Trigger Levels
+        # change_pct = ((c0 - prev)/prev)*100  =>  prev = c0 / (1 + change/100)
+        try:
+            prev_close = c0 / (1 + (change_current/100.0))
+        except:
+            prev_close = c0 # Fallback
+
+        if lom_status == "LOM_SHORT":
+            trig_lvl = prev_close * 1.005
+            found_time = find_time("LOM_SHORT", "Bullish Breakout", trig_lvl)
+            if found_time: strategy_hits["LOM_SHORT"] = found_time
+
+        if lom_status == "LOM_LONG":
+            trig_lvl = prev_close * 1.03
+            found_time = find_time("LOM_LONG", "Bullish Breakout", trig_lvl)
+            if found_time: strategy_hits["LOM_LONG"] = found_time
+
+        if lom_status == "LOM_SHORT_BEAR":
+            trig_lvl = prev_close * 0.995 # -0.5%
+            found_time = find_time("LOM_SHORT_BEAR", "Bearish Breakout", trig_lvl)
+            if found_time: strategy_hits["LOM_SHORT_BEAR"] = found_time
+
+        if change_current < -2.0: # Reversal condition
+                trig_lvl = prev_close * 0.98
+                found_time = find_time("REVERSAL", "Bearish Breakout", trig_lvl)
+                if found_time: strategy_hits["REVERSAL"] = found_time
+
+        if is_contraction:
+                strategy_hits["CONTRACTION"] = current_full_time
+        
+        if is_sniper:
+                strategy_hits["SNIPER"] = current_full_time
+
+        # We don't read/write global breakout_tracker here to ensure thread safety
+        # Instead, we return detected breakouts to the main thread
+
+        return {
+            "scan_time": current_time,
+            "scan_full_time": current_full_time, # For Strategies
+            "breakout_times": new_breakouts, # Pass to main thread
+            "strategy_hits": strategy_hits, # NEW: Pass precise strategy times
+            "symbol": symbol, "token": token, "ltp": c0,
+            "change_pct": round(change_current, 2),
+            "rsi": round(cur_rsi, 2), "strength_score": round(score, 1),
+            "sentiment": sentiment,
+            "change_current": round(change_current, 2),
+            "change_1d": round(change_1d, 2),
+            "change_2d": round(change_2d, 2),
+            "change_3d": round(change_3d, 2),
+            "avg_3d": round(avg_3d, 2),
+            "avg_dom_3d": avg_dom_3d,
+            "dom_current": dom_current, "dom_1d": dom_1d,
+            "dom_2d": dom_2d, "dom_3d": dom_3d,
+            "macd_signal": macd_sig,
+            "lom": lom_status,             # NEW
+            "is_contraction": is_contraction, # NEW
+            "is_sniper": is_sniper,        # NEW
+            "breakout_1d": bo_1,
+            "breakout_2d": bo_2,           # NEW
+            "breakout_10d": bo_10,
+            "breakout_30d": bo_30,
+            "breakout_50d": bo_50,
+            "breakout_100d": bo_100,
+            "breakout_52w": bo_52w,
+            "high_1d": h1, "low_1d": l1,
+            "high_2d": h2, "low_2d": l2,   # NEW
+            "high_10d": h10, "low_10d": l10,
+            "high_30d": h30, "low_30d": l30,
+            "high_50d": h50, "low_50d": l50,
+            "high_100d": h100, "low_100d": l100,
+            "high_52w": h52w, "low_52w": l52w,
+            "breakout_all": bo_all,
+            "high_all": new_ath,
+            "day_high": day_h,
+            "day_low": day_l,
+            "volume": hist_data[-1][5],
+            "turnover": (c0 * hist_data[-1][5]) / 10000000, # Turnover in Cr
+            # Signal to main thread if we found a new ATH to save
+            "update_ath": new_ath if new_ath > prev_ath else None
+        }
+    except Exception as e:
+        print(f"Metrics Error {symbol}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+# --- NEW API ENDPOINTS FOR SEARCH ---
+
+@app.get("/search")
+def search_stocks(q: str, exchange: str = "NSE"):
+    try:
+        sm = ScripMaster.get_instance()
+        if not sm.df is not None:
+            sm.load_data()
+            
+        df = sm.df
+        q = q.upper()
+        
+        # Filter: NSE or BSE
+        # Relaxed logic: Search in Name OR Symbol.
+        # Removed strict '-EQ' check to allow SME (SM, ST) and other series (BE).
+        mask = (df['exch_seg'] == exchange) & (
+            (df['name'].str.contains(q, na=False)) | (df['symbol'].str.contains(q, na=False))
+        )
+        
+        # For NSE, we might still want to prioritize EQ/BE over others if needed, but for now just show all.
+        # Maybe exclude indices if they are in 'NSE' segment (usually they are in 'NSE-IND' or similar but here exch_seg is 'NSE')
+        
+        results = df[mask].head(20)[['name', 'token', 'symbol']].to_dict(orient='records')
+        return {"status": "success", "data": results}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/analyze/{exchange}/{symbol}/{token}")
+def analyze_stock(exchange: str, symbol: str, token: str):
+    """
+    On-Demand Analysis for any stock
+    """
+    try:
+        # Check session
+        if not session_data and not smartApi.access_token:
+            login()
+            
+        # Fetch History
+        to_date = datetime.now()
+        from_date = to_date - timedelta(days=400) # Enough for year high/low
+        fmt = "%Y-%m-%d %H:%M"
+        
+        res = smartApi.getCandleData({
+            "exchange": exchange, "symboltoken": token, "interval": "ONE_DAY",
+            "fromdate": from_date.strftime(fmt), "todate": to_date.strftime(fmt)
+        })
+        
+        if res and res.get('data'):
+             hist_data = res['data']
+             # Calculate Metrics
+             # Note: For on-demand, we might not have ATH cache, so ATH check is relative to loaded history (400 days)
+             # or we could fetch deeper history (5000 days) if needed, but slow.
+             # Let's stick to 400 days for speed (approx 1.5 year).
+             # NOTE: calculate_metrics expects 'ath_val' to be from cache. We pass 0 if unknown.
+             
+             metrics = calculate_metrics(symbol, token, hist_data, ath_val=0) # No time finder for speed
+             return {"status": "success", "data": metrics}
+             
+        else:
+             return {"status": "error", "message": "No Data Found"}
+             
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/news/{symbol}")
+def get_stock_news(symbol: str):
+    try:
+        import requests
+        import xml.etree.ElementTree as ET
+        
+        # Clean symbol (remove -EQ if present)
+        clean_sym = symbol.replace("-EQ", "").replace("_EQ", "")
+        
+        # Google News RSS URL
+        url = f"https://news.google.com/rss/search?q={clean_sym}+stock+news+india&hl=en-IN&gl=IN&ceid=IN:en"
+        
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        
+        root = ET.fromstring(response.content)
+        
+        news_items = []
+        # Parse items
+        for item in root.findall(".//item"):
+            title = item.find("title").text if item.find("title") is not None else "No Title"
+            link = item.find("link").text if item.find("link") is not None else "#"
+            pubDate = item.find("pubDate").text if item.find("pubDate") is not None else ""
+            source = item.find("source").text if item.find("source") is not None else "Google News"
+            
+            # Simple deduplication or cleaning if needed
+            news_items.append({
+                "title": title,
+                "link": link,
+                "date": pubDate,
+                "source": source
+            })
+            
+            if len(news_items) >= 5: break
+            
+        return {"status": "success", "data": news_items}
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+
+def background_scanner():
+    global is_scanner_running, market_cache
+    print("Scanner: Started")
+    
+            # Define Processing Logic Internal to Scanner (or move global)
+    # calculate_metrics MOVED GLOBAL
+
 
     while True:
         try:
@@ -675,7 +892,7 @@ def background_scanner():
                     if res: 
                         # 1. Update Persistent Breakout Tracker (Thread-Safe in Main Thread)
                         sym = res['symbol']
-                        new_bos = res.get('new_breakouts', {})
+                        new_bos = res.get('breakout_times', {})
                         
                         if sym not in breakout_tracker: breakout_tracker[sym] = {}
                         
@@ -688,11 +905,52 @@ def background_scanner():
                         # Populate response with ALL persisted breakout times
                         res['breakout_times'] = breakout_tracker[sym]
 
+                        # 1.1 Strategy Tracker
+                        if sym not in strategy_tracker: strategy_tracker[sym] = {}
+                        
+                        # Check LOM
+                        lom = res.get('lom')
+                        if lom and lom != "None" and lom not in strategy_tracker[sym]:
+                             strategy_tracker[sym][lom] = res['scan_full_time']
+                             tracker_needs_save = True # Reuse same save flag or add new one? reused is fine if we save both
+                        
+                        # Support Bearish LOM tracking
+                        if "LOM_SHORT_BEAR" in strategy_tracker[sym]: res['lom_short_bear_time'] = strategy_tracker[sym]["LOM_SHORT_BEAR"]
+                        if "LOM_SHORT" in strategy_tracker[sym]: res['lom_short_time'] = strategy_tracker[sym]["LOM_SHORT"]
+                        
+                        # Check Contraction
+                        if res.get('is_contraction') and "CONTRACTION" not in strategy_tracker[sym]:
+                             strategy_tracker[sym]["CONTRACTION"] = res['scan_full_time']
+                             tracker_needs_save = True
+
+                        # Check Sniper
+                        if res.get('is_sniper') and "SNIPER" not in strategy_tracker[sym]:
+                             strategy_tracker[sym]["SNIPER"] = res['scan_full_time']
+                             tracker_needs_save = True
+
+                        # Check REVERSAL (Day H/L Reversal / Deep Red)
+                        # Page definition: change_pct < -2
+                        if res.get('change_pct') and res['change_pct'] < -2.0 and "REVERSAL" not in strategy_tracker[sym]:
+                             strategy_tracker[sym]["REVERSAL"] = res['scan_full_time']
+                             tracker_needs_save = True
+
+                        res['strategy_times'] = strategy_tracker[sym]
+
                         # 2. Update Cache
                         market_cache[sym] = res
                         market_cache[sym] = res
                         token_map_reverse[res['token']] = sym
                         
+                        # A. Precise Hits (from Intraday Scan in calculate_metrics)
+                        hits = res.get('strategy_hits', {})
+                        for s_name, s_time in hits.items():
+                             # Overwrite if current is missing OR if current is a "Fallback" (contains space/date)
+                             # Precise time is "HH:MM" (no space). Fallback is "YYYY-MM-DD HH:MM:SS".
+                             curr_val = strategy_tracker.get(sym, {}).get(s_name)
+                             if not curr_val or " " in str(curr_val):
+                                  strategy_tracker[sym][s_name] = s_time
+                                  tracker_needs_save = True
+
                         # 3. Update ATH Cache
                         if res.get('update_ath'):
                              new_val = res['update_ath']
@@ -700,12 +958,16 @@ def background_scanner():
                                  ath_cache[sym] = new_val
                                  ath_needs_save = True
 
-            # Save Tracker if Changed
+            # Save Tracker if Changed (Breakout)
             if tracker_needs_save:
                 try:
                     with open("breakout_tracker.json", "w") as f:
                         json.dump(breakout_tracker, f)
-                    print("Persistence: Saved breakout_tracker.json")
+                    
+                    with open("strategy_tracker.json", "w") as f:
+                        json.dump(strategy_tracker, f)
+                        
+                    print("Persistence: Saved trackers")
                 except Exception as e:
                     print(f"Persistence Error: {e}")
 

@@ -101,8 +101,8 @@ export default function InsiderTable({ title, type, items, showDaySegment = fals
 
                         {/* Date Time */}
                         <div className="col-span-3 text-right text-xs text-slate-400 font-mono flex flex-col items-end justify-center">
-                            <span>{item.dateTime.split(" ")[0]}</span>
-                            <span className="text-slate-500">{item.dateTime.split(" ")[1]}</span>
+                            <span>{item.dateTime.includes(" ") ? item.dateTime.split(" ")[0] : item.dateTime}</span>
+                            {item.dateTime.includes(" ") && <span className="text-slate-500">{item.dateTime.split(" ")[1].slice(0, 5)}</span>}
                         </div>
 
                         {/* Day Segment (Optional) */}

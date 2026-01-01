@@ -42,16 +42,17 @@ export default function InsiderPage() {
         const movers10min = [...movers].reverse();
 
 
-        // 2. LOM Short Term (Intraday): Moderate gains (0.5% to 3%) - Good for scalps
+        // 2. LOM Short Term (Intraday): +/- 0.5% to 3%
         const lomShort = data
-            .filter(item => item.change_pct > 0.5 && item.change_pct <= 3)
-            .sort((a, b) => b.strength_score - a.strength_score) // High strength
-            .slice(0, 5)
+            .filter(item => (item.change_pct > 0.5 && item.change_pct <= 3) || (item.change_pct >= -3 && item.change_pct < -0.5))
+            .sort((a, b) => b.strength_score - a.strength_score)
+            .slice(0, 10) // Show more since we have bear now
             .map(item => ({
                 symbol: item.symbol,
                 percent: item.change_pct,
-                dateTime: currentTime, // Using scan time would be better if available
-                status: "BULL" as const
+                // Check if it's Bull or Bear to grab the right time
+                dateTime: (item.change_pct > 0 ? item.strategy_times?.["LOM_SHORT"] : item.strategy_times?.["LOM_SHORT_BEAR"]) || item.scan_full_time || currentTime,
+                status: (item.change_pct > 0 ? "BULL" : "BEAR") as "BULL" | "BEAR"
             }));
 
         // 3. LOM Long Term (Swing): Strong gains (> 3%) - Breakout runners
@@ -62,7 +63,7 @@ export default function InsiderPage() {
             .map(item => ({
                 symbol: item.symbol,
                 percent: item.change_pct,
-                dateTime: currentTime,
+                dateTime: item.strategy_times?.["LOM_LONG"] || item.scan_full_time || currentTime,
                 status: "BULL" as const
             }));
 
@@ -74,7 +75,7 @@ export default function InsiderPage() {
             .map(item => ({
                 symbol: item.symbol,
                 percent: item.change_pct,
-                dateTime: currentTime,
+                dateTime: item.strategy_times?.["CONTRACTION"] || item.scan_full_time || currentTime,
                 status: (item.change_pct >= 0 ? "BULL" : "BEAR") as "BULL" | "BEAR"
             }));
 
@@ -87,7 +88,7 @@ export default function InsiderPage() {
             .map(item => ({
                 symbol: item.symbol,
                 percent: item.change_pct,
-                dateTime: currentTime,
+                dateTime: item.strategy_times?.["REVERSAL"] || item.scan_full_time || currentTime,
                 status: "BEAR" as const // Currently falling, potential reversal watch
             }));
 
@@ -99,7 +100,7 @@ export default function InsiderPage() {
             .map(item => ({
                 symbol: item.symbol,
                 percent: item.change_pct,
-                dateTime: currentTime,
+                dateTime: item.breakout_times?.["2d"] || item.scan_full_time || currentTime,
                 status: (item.change_pct >= 0 ? "BULL" : "BEAR") as "BULL" | "BEAR"
             }));
 
@@ -111,7 +112,8 @@ export default function InsiderPage() {
             .map(item => ({
                 symbol: item.symbol,
                 percent: item.change_pct,
-                dateTime: currentTime,
+                // Use backend scan time (15:30) instead of live time
+                dateTime: item.scan_full_time || currentTime,
                 daySegment: "Live",
                 status: (item.change_pct >= 0 ? "BULL" : "BEAR") as "BULL" | "BEAR"
             }));
@@ -123,7 +125,7 @@ export default function InsiderPage() {
             .map(item => ({
                 symbol: item.symbol,
                 percent: item.change_pct,
-                dateTime: currentTime,
+                dateTime: item.strategy_times?.["SNIPER"] || item.scan_full_time || currentTime,
                 status: "BULL" as const // Looking for Bullish reversal
             }));
 
@@ -149,8 +151,8 @@ export default function InsiderPage() {
                 <p className="text-slate-400">Real-time momentum spikes and breakout signals.</p>
             </div>
 
-            {/* Section 1: Heatmaps */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Section 1: Heatmaps - Full Width Each */}
+            <div className="grid grid-cols-1 gap-6">
                 <InsiderHeatmap
                     title="5 MIN MOMENTUM SPIKE"
                     timeFrame="5min"
