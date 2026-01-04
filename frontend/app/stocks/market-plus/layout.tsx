@@ -7,6 +7,7 @@ export default function MarketLayout({
 }: {
     children: React.ReactNode;
 }) {
+
     return (
         <main className="min-h-screen p-6 md:p-8 space-y-8">
             {/* Header */}

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Zap, Layers } from "lucide-react";
+import { Zap, Layers, Sunrise } from "lucide-react";
 
 export default function MarketNav() {
     const pathname = usePathname();
@@ -13,6 +13,12 @@ export default function MarketNav() {
             href: "/stocks/market-plus/intraday",
             icon: Zap,
             color: "text-orange-500"
+        },
+        {
+            name: "Pre-Market",
+            href: "/stocks/market-plus/pre-market",
+            icon: Sunrise,
+            color: "text-yellow-500"
         },
         {
             name: "Positional Breakouts",

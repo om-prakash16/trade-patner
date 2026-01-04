@@ -275,6 +275,20 @@ def calculate_metrics(symbol, token, hist_data, ath_val=0, time_finder_func=None
     try:
         if len(hist_data) < 5: return None
         
+        # Freshness Check (Don't process data older than 5 days)
+        try:
+            last_c_time = hist_data[-1][0]
+            last_dt = None
+            if "T" in last_c_time:
+                last_dt = datetime.strptime(last_c_time.split("T")[0], "%Y-%m-%d")
+            else:
+                last_dt = datetime.strptime(last_c_time[:10], "%Y-%m-%d")
+            
+            if (datetime.now() - last_dt).days > 5:
+                # print(f"Skipping {symbol}: Data too old ({last_dt.date()})")
+                return None
+        except: pass
+        
         c0 = hist_data[-1][4]
         c1 = hist_data[-2][4]
         c2 = hist_data[-3][4]
@@ -478,11 +492,14 @@ def calculate_metrics(symbol, token, hist_data, ath_val=0, time_finder_func=None
                         is_bull = status == "Bullish Breakout"
                         found = time_finder_func(symbol, token, level, is_bull, date_obj=dt_obj)
                         if found: return found
+                        
+                        # Fallback to Candle Date + 15:30 if exact time not found but breakout exists
+                        return dt_obj.strftime("%Y-%m-%d") + " 15:30:00"
                 except:
                     pass
             
-            # 3. Fallback
-            return None
+            # 3. Fallback (Use current scan time only if date parsing failed)
+            return current_full_time
 
         new_breakouts = {}
         if bo_1 in ["Bullish Breakout", "Bearish Breakout"]: 
@@ -591,6 +608,90 @@ def calculate_metrics(symbol, token, hist_data, ath_val=0, time_finder_func=None
         import traceback
         traceback.print_exc()
         return None
+
+# --- PRE-MARKET ENDPOINT ---
+@app.get("/api/pre-market")
+def get_pre_market_data():
+    try:
+        data = list(market_cache.values())
+        if not data: return {"status": "empty", "message": "No data available"}
+        
+        # 1. Pre-Market Gainers/Losers (Based on Last Close)
+        # Sort by change_pct
+        sorted_change = sorted(data, key=lambda x: x.get('change_pct', 0), reverse=True)
+        top_gainers = sorted_change[:20]
+        top_losers = sorted_change[-20:][::-1] # Ascending
+        
+        # 2. Breakout Watch (Near Levels)
+        watch_list = []
+        # Key levels to check
+        levels_map = {
+            "10d": "high_10d", "30d": "high_30d", "50d": "high_50d", 
+            "100d": "high_100d", "52w": "high_52w", "all": "high_all"
+        }
+        
+        for item in data:
+            ltp = item.get('ltp', 0)
+            if ltp == 0: continue
+            
+            # Check proximity to Resistance Levels (Bullish Watch)
+            # We can also check Support for Bearish, but usually "Breakout" = Resistance
+            closest_dist = 100
+            closest_lvl = None
+            closest_type = None
+            
+            for lbl, key in levels_map.items():
+                lvl = item.get(key)
+                if not lvl: continue
+                
+                # Check distance %
+                # (Level - LTP) / LTP
+                if lvl > ltp: # Approaching from below
+                    dist = ((lvl - ltp) / ltp) * 100
+                    if dist <= 0.5: # Within 0.5%
+                        if dist < closest_dist:
+                            closest_dist = dist
+                            closest_lvl = lvl
+                            closest_type = lbl
+            
+            if closest_type:
+                watch_list.append({
+                    "symbol": item['symbol'],
+                    "ltp": ltp,
+                    "breakout_type": closest_type,
+                    "breakout_level": closest_lvl,
+                    "distance_pct": round(closest_dist, 2),
+                    "change_pct": item.get('change_pct', 0)
+                })
+        
+        # Sort Watch List by distance (closest first)
+        watch_list.sort(key=lambda x: x['distance_pct'])
+        
+        # 3. Strength Bias (3D Avg)
+        # Group by Buyers/Sellers
+        # Items with avg_3d > 0.5 -> Buyers, < -0.5 -> Sellers
+        strength_buyers = [
+            x for x in data if x.get('avg_3d', 0) > 0.5
+        ]
+        strength_sellers = [
+            x for x in data if x.get('avg_3d', 0) < -0.5
+        ]
+        
+        # Sort by strength magnitude
+        strength_buyers.sort(key=lambda x: x.get('avg_3d', 0), reverse=True)
+        strength_sellers.sort(key=lambda x: x.get('avg_3d', 0)) # Most negative first
+        
+        return {
+            "gainers": top_gainers,
+            "losers": top_losers,
+            "breakout_watch": watch_list[:30], # Top 30 closest
+            "strength_buyers": strength_buyers[:20],
+            "strength_sellers": strength_sellers[:20]
+        }
+        
+    except Exception as e:
+        print(f"Pre-Market Error: {e}")
+        return {"error": str(e)}
 
 # --- NEW API ENDPOINTS FOR SEARCH ---
 
@@ -704,7 +805,64 @@ def background_scanner():
     
             # Define Processing Logic Internal to Scanner (or move global)
     # calculate_metrics MOVED GLOBAL
+    
+    # --- CLEANUP STALE DATA (Start of Session) ---
+    def clean_stale_data():
+        global breakout_tracker, strategy_tracker
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        print(f"Scanner: Cleaning stale data not matching {today_str}...")
+        
+        # 1. Clean Breakout Tracker
+        cleaned_bo = 0
+        for sym in list(breakout_tracker.keys()):
+            # Copy to iterate safely
+            entries = breakout_tracker[sym].copy()
+            changed = False
+            for tf, time_val in entries.items():
+                # time_val can be "HH:MM" (Old/Stale) or "YYYY-MM-DD HH:MM:..." (New)
+                is_stale = True
+                
+                # Check format
+                if len(str(time_val)) > 10: # Likely has date
+                    if str(time_val).startswith(today_str):
+                        is_stale = False
+                
+                # If Stale, remove
+                if is_stale:
+                    del breakout_tracker[sym][tf]
+                    changed = True
+                    cleaned_bo += 1
+            
+            # Remove symbol if empty
+            if not breakout_tracker[sym]:
+                del breakout_tracker[sym]
+                
+        # 2. Clean Strategy Tracker
+        cleaned_strat = 0
+        for sym in list(strategy_tracker.keys()):
+            entries = strategy_tracker[sym].copy()
+            for strat, time_val in entries.items():
+                is_stale = True
+                if len(str(time_val)) > 10 and str(time_val).startswith(today_str):
+                    is_stale = False
+                
+                if is_stale:
+                    del strategy_tracker[sym][strat]
+                    cleaned_strat += 1
+            
+            if not strategy_tracker[sym]:
+                del strategy_tracker[sym]
 
+        print(f"Scanner: Removed {cleaned_bo} stale breakouts and {cleaned_strat} stale strategies.")
+        
+        # Save immediately
+        try:
+            with open("breakout_tracker.json", "w") as f: json.dump(breakout_tracker, f)
+            with open("strategy_tracker.json", "w") as f: json.dump(strategy_tracker, f)
+        except: pass
+
+    # Execute Cleanup Once
+    clean_stale_data()
 
     while True:
         try:
@@ -744,76 +902,74 @@ def background_scanner():
                 
                 item_from_date = to_date - timedelta(days=days_needed)
                 
-                # Helper to get Intraday Data for Precise Time (Rate Limited)
+                # Helper to get Intraday Data for Precise Time (Rate Limited, Buffered)
+                # Cache at function scope to avoid redundant calls for same stock
+                intraday_candles_cache = None
+                
                 def get_intraday_breakout_time(symbol, token, level, is_bullish, date_obj=None):
+                    nonlocal intraday_candles_cache
                     try:
-                        # Determine Date Range
-                        if date_obj is None:
-                            target_date = datetime.now()
-                        else:
-                            target_date = date_obj
-                        
-                        # Set to 09:15 of that day
-                        start_time = target_date.replace(hour=9, minute=15, second=0, microsecond=0)
-                        # End time 15:30 of that day
-                        end_time = target_date.replace(hour=15, minute=30, second=0, microsecond=0)
-                        
-                        # If today, cap end time at Now (to avoid future requests error?)
-                        # Actually Angel API handles future date okay usually, but safer to respect Now if IsToday
-                        if target_date.date() == datetime.now().date():
-                             if datetime.now() < end_time:
+                        # 1. Fetch if not cached
+                        if intraday_candles_cache is None:
+                            # Determine Date Range from passed date_obj or Now
+                            if date_obj is None: target_date = datetime.now()
+                            else: target_date = date_obj
+                            
+                            start_time = target_date.replace(hour=9, minute=15, second=0, microsecond=0)
+                            end_time = target_date.replace(hour=15, minute=30, second=0, microsecond=0)
+                            if target_date.date() == datetime.now().date() and datetime.now() < end_time:
                                  end_time = datetime.now()
 
-                        start_str = start_time.strftime("%Y-%m-%d %H:%M") # Explicit format
-                        end_str = end_time.strftime("%Y-%m-%d %H:%M")
+                            start_str = start_time.strftime("%Y-%m-%d %H:%M")
+                            end_str = end_time.strftime("%Y-%m-%d %H:%M")
 
-                        # 1. Fetch Intraday 5-min
-                        print(f"DEBUG: Intraday Req {symbol} Date: {start_str} to {end_str}")
-                        res = smartApi.getCandleData({
-                            "exchange": "NSE", "symboltoken": token, "interval": "FIVE_MINUTE",
-                            "fromdate": start_str, "todate": end_str
-                        })
+                            print(f"DEBUG: Intraday Fetch {symbol} [Token:{token}] range {start_str} to {end_str}")
+                            res = smartApi.getCandleData({
+                                "exchange": "NSE", "symboltoken": token, "interval": "FIVE_MINUTE",
+                                "fromdate": start_str, "todate": end_str
+                            })
+                            
+                            if res and res.get('data'):
+                                intraday_candles_cache = res['data']
+                                print(f"DEBUG: Cached {len(intraday_candles_cache)} candles for {symbol}")
+                            else:
+                                intraday_candles_cache = [] # Empty list to prevent refetch
+                                print(f"DEBUG: No Intraday Data for {symbol}")
+
+                        # 2. Search in Cache
+                        if not intraday_candles_cache: return None
                         
-                        if res and res.get('data'):
-                            print(f"DEBUG: Found {len(res['data'])} intraday candles for {symbol}")
-                            for candle in res['data']:
-                                # Timestamp parse
-                                try:
-                                    c_time_full = candle[0] # "2024-12-28T09:15:00+05:30"
-                                    # We just want HH:MM
-                                    c_time = c_time_full.split("T")[1][:5]
-                                except:
-                                    continue # Skip malformed
-                                
-                                c_open = candle[1]
-                                c_high = candle[2]
-                                c_low = candle[3]
-                                
-                                # Check Breakout
-                                if is_bullish:
-                                    # Check Gap Up or Crossing
-                                    if c_open >= level:
-                                        print(f"DEBUG: {symbol} Bullish Gap Up/Open > Level @ {c_time} (O:{c_open} >= {level})")
-                                        return c_time
-                                    if c_high >= level: 
-                                        print(f"DEBUG: {symbol} Bullish Breakout Found @ {c_time} (H:{c_high} >= {level})")
-                                        return c_time
-                                else: # Bearish
-                                    # Check Gap Down
-                                    if c_open <= level:
-                                        print(f"DEBUG: {symbol} Bearish Gap Down/Open < Level @ {c_time} (O:{c_open} <= {level})")
-                                        return c_time
-                                    if c_low <= level: 
-                                        print(f"DEBUG: {symbol} Bearish Breakout Found @ {c_time} (L:{c_low} <= {level})")
-                                        return c_time
-                        else:
-                             print(f"DEBUG: No Intraday Data for {symbol} on {target_date.date()}")
+                        for candle in intraday_candles_cache:
+                            # Timestamp parse
+                            try:
+                                c_time_full = candle[0] # "2024-12-28T09:15:00+05:30"
+                                c_time = c_time_full.split("T")[1][:5]
+                            except: continue 
+                            
+                            c_open = candle[1]
+                            c_high = candle[2]
+                            c_low = candle[3]
+                            
+                            if is_bullish:
+                                if c_open >= level:
+                                    print(f"DEBUG: {symbol} Bullish GAP UP > Level {level} @ {c_time} (Open:{c_open})")
+                                    return c_time_full.replace("T", " ")[:16] 
+                                if c_high >= level: 
+                                    print(f"DEBUG: {symbol} Bullish CROSS > Level {level} @ {c_time} (High:{c_high})")
+                                    return c_time_full.replace("T", " ")[:16]
+                            else: # Bearish
+                                if c_open <= level:
+                                    print(f"DEBUG: {symbol} Bearish GAP DOWN < Level {level} @ {c_time}")
+                                    return c_time_full.replace("T", " ")[:16] 
+                                if c_low <= level: 
+                                    print(f"DEBUG: {symbol} Bearish CROSS < Level {level} @ {c_time}")
+                                    return c_time_full.replace("T", " ")[:16] 
+                        
+                        print(f"DEBUG: {symbol} Breakout detected but precise intraday time NOT found in cache.")
                         return None
+
                     except Exception as e:
-                        print(f"Intraday Scan Error {symbol}: {e}")
-                        return None
-                    except Exception as e:
-                        print(f"Intraday Scan Error {symbol}: {e}")
+                        print(f"Intraday Cache Error {symbol}: {e}")
                         return None
 
                 # Retry Logic with Failover (Upstox Primary)

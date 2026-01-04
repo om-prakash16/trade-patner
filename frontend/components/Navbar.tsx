@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { Activity, Menu, ChevronDown, Radio } from "lucide-react";
 import { useSidebar } from "@/context/SidebarContext";
+import { ThemeToggle } from "./ThemeToggle";
 
 export default function Navbar() {
     const [status, setStatus] = useState("Checking...");
@@ -64,6 +65,10 @@ export default function Navbar() {
 
                     {/* Right Section: Broker & Status */}
                     <div className="flex items-center gap-4">
+
+                        <ThemeToggle />
+
+                        {/* Broker Selector */}
 
                         {/* Broker Selector */}
                         <div className="relative">
