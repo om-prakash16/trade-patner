@@ -224,16 +224,15 @@ def start_websocket():
                 if tok in token_map_reverse:
                     sym = token_map_reverse[tok]
                     if sym in market_cache:
-                        market_cache[sym]['ltp'] = message['last_traded_price'] / 100.0 # V2 usually sends in paise? Check docs. standard is usually normal price but let's verify.
-                        # Actually SmartWebSocketV2 usually sends data as is.
-                        # Wait, V2 often sends LTP as float directly.
-                        market_cache[sym]['ltp'] = message['last_traded_price'] / 100.0
+                        new_ltp = message['last_traded_price'] / 100.0
+                        market_cache[sym]['ltp'] = new_ltp
                         
-                        # Calculate change if open/close available or just update LTP
-                        # message usually has 'change_percent' or 'net_change'
-                        # V2 structure: subscription_mode, exchange_type, token, sequence_number, exchange_timestamp, last_traded_price, subscription_mode_val
-                        # It might NOT have change_percent in mode 1 (LTP).
-                        # Let's assume we get decent data.
+                        # Real-Time Change Calculation
+                        if 'prev_close' in market_cache[sym]:
+                            pc = market_cache[sym]['prev_close']
+                            if pc > 0:
+                                change = ((new_ltp - pc) / pc) * 100
+                                market_cache[sym]['change_pct'] = round(change, 2)
                         pass
 
         def on_open(wsapp):
@@ -601,7 +600,8 @@ def calculate_metrics(symbol, token, hist_data, ath_val=0, time_finder_func=None
             "volume": hist_data[-1][5],
             "turnover": (c0 * hist_data[-1][5]) / 10000000, # Turnover in Cr
             # Signal to main thread if we found a new ATH to save
-            "update_ath": new_ath if new_ath > prev_ath else None
+            "update_ath": new_ath if new_ath > prev_ath else None,
+            "prev_close": hist_data[-2][4] if len(hist_data) >= 2 else c0 # Return Prev Close for Live Calcs
         }
     except Exception as e:
         print(f"Metrics Error {symbol}: {e}")
@@ -615,6 +615,14 @@ def get_pre_market_data():
     try:
         data = list(market_cache.values())
         if not data: return {"status": "empty", "message": "No data available"}
+        
+        # Determine Market Status
+        now = datetime.now()
+        market_status = "CLOSED"
+        if now.hour == 9 and 0 <= now.minute < 15:
+            market_status = "PRE-OPEN"
+        elif (now.hour == 9 and now.minute >= 15) or (now.hour > 9 and now.hour < 15) or (now.hour == 15 and now.minute <= 30):
+             market_status = "OPEN"
         
         # 1. Pre-Market Gainers/Losers (Based on Last Close)
         # Sort by change_pct
@@ -686,7 +694,8 @@ def get_pre_market_data():
             "losers": top_losers,
             "breakout_watch": watch_list[:30], # Top 30 closest
             "strength_buyers": strength_buyers[:20],
-            "strength_sellers": strength_sellers[:20]
+            "strength_sellers": strength_sellers[:20],
+            "market_status": market_status
         }
         
     except Exception as e:
