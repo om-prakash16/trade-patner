@@ -144,6 +144,46 @@ export default function Dashboard() {
             </div>
           </Link>
 
+          {/* Swing Stocks */}
+          <Link href="/stocks/swing" className="group relative overflow-hidden bg-slate-900/40 rounded-3xl border border-slate-800 hover:bg-slate-900/60 hover:border-indigo-500/30 transition-all duration-300">
+            <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="p-8 h-full flex flex-col justify-between">
+              <div className="flex justify-between items-start">
+                <div className="p-3 bg-indigo-500/10 rounded-2xl border border-indigo-500/20">
+                  <Activity className="w-8 h-8 text-indigo-500" />
+                </div>
+                <ArrowRight className="w-6 h-6 text-slate-600 group-hover:text-indigo-400 group-hover:translate-x-1 transition-transform" />
+              </div>
+
+              <div className="mt-8">
+                <h2 className="text-2xl font-bold text-white mb-2 group-hover:text-indigo-400 transition-colors">Swing Radar</h2>
+                <p className="text-slate-400 text-sm">
+                  Multi-day trend & momentum scanner.
+                </p>
+              </div>
+            </div>
+          </Link>
+
+          {/* MACD Scanner */}
+          <Link href="/stocks/macd" className="group relative overflow-hidden bg-slate-900/40 rounded-3xl border border-slate-800 hover:bg-slate-900/60 hover:border-blue-500/30 transition-all duration-300">
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="p-8 h-full flex flex-col justify-between">
+              <div className="flex justify-between items-start">
+                <div className="p-3 bg-blue-500/10 rounded-2xl border border-blue-500/20">
+                  <Clock className="w-8 h-8 text-blue-500" />
+                </div>
+                <ArrowRight className="w-6 h-6 text-slate-600 group-hover:text-blue-400 group-hover:translate-x-1 transition-transform" />
+              </div>
+
+              <div className="mt-8">
+                <h2 className="text-2xl font-bold text-white mb-2 group-hover:text-blue-400 transition-colors">MACD Scanner</h2>
+                <p className="text-slate-400 text-sm">
+                  Quiet momentum buildup (12:00 - 02:25).
+                </p>
+              </div>
+            </div>
+          </Link>
+
           {/* System Status (Mini) */}
           <div className="md:col-span-3 bg-slate-900/30 border border-slate-800/50 rounded-2xl p-4 flex justify-between items-center text-sm text-slate-500">
             <div className="flex items-center gap-2">

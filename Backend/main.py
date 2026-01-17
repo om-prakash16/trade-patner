@@ -6,6 +6,13 @@ import os
 import json
 import pyotp
 import pandas as pd
+import pandas_ta as ta # Ensure pandas_ta is available
+from swing_strategy import SwingStrategy
+from macd_strategy import MACDStrategy
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import logging
@@ -701,6 +708,141 @@ def get_pre_market_data():
     except Exception as e:
         print(f"Pre-Market Error: {e}")
         return {"error": str(e)}
+
+import time
+
+# --- SWING STRATEGY ENDPOINT ---
+@app.get("/strategies/swing")
+def get_swing_stocks():
+    try:
+        # 1. Get List of Stocks to Scan
+        scanner = ScripMaster.get_instance()
+        fno_list = scanner.get_all_fno_tokens()
+        
+        if not fno_list:
+            return {"status": "error", "message": "Scrip Master not ready"}
+            
+        results = []
+        strategy = SwingStrategy()
+        
+        count = 0
+        # LIMIT TO 30 STOCKS FOR DEMO/MVP TO AVOID TIMEOUT & RATE LIMITS
+        max_stocks = 30
+        
+        for item in fno_list:
+            if count >= max_stocks:
+                break
+                
+            symbol = item['symbol']
+            token = item['token']
+            
+            # Fetch Daily Data
+            try:
+                # Add delay to avoid Rate Limit (3 req/sec rule of thumb)
+                time.sleep(0.4) 
+                
+                # Calculate from/to dates for last ~100 days
+                to_date = datetime.now()
+                from_date = to_date - timedelta(days=150)
+                
+                hist_params = {
+                    "exchange": "NSE",
+                    "symboltoken": token,
+                    "interval": "ONE_DAY",
+                    "fromdate": from_date.strftime("%Y-%m-%d %H:%M"),
+                    "todate": to_date.strftime("%Y-%m-%d %H:%M")
+                }
+                
+                data = smartApi.getCandleData(hist_params)
+                
+                if data['status'] and data['data']:
+                    c_data = data['data']
+                    df = pd.DataFrame(c_data, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                    
+                    analysis = strategy.perform_analysis(df)
+                    
+                    if analysis:
+                        res_obj = {
+                            "symbol": symbol,
+                            "token": token,
+                            **analysis
+                        }
+                        results.append(res_obj)
+                elif not data['status']:
+                     print(f"Swing Scan Fail {symbol}: {data.get('message')}")
+                        
+            except Exception as e:
+                print(f"Error scanning {symbol}: {e}")
+                continue
+                
+            count += 1
+            
+        return {"status": "success", "count": len(results), "data": results}
+
+    except Exception as e:
+        print(f"Swing Strategy Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- MACD STRATEGY ENDPOINT ---
+@app.get("/strategies/macd")
+def get_macd_stocks():
+    try:
+        scanner = ScripMaster.get_instance()
+        fno_list = scanner.get_all_fno_tokens()
+        
+        if not fno_list:
+            return {"status": "error", "message": "Scrip Master not ready"}
+            
+        results = []
+        strategy = MACDStrategy()
+        
+        # Scan ALL F&O stocks but in parallel
+        scan_list = fno_list
+        
+        def process_macd(item):
+            symbol = item['symbol']
+            token = item['token']
+            try:
+                # Need last ~5 days
+                to_date = datetime.now()
+                from_date = to_date - timedelta(days=5)
+                
+                hist_params = {
+                    "exchange": "NSE",
+                    "symboltoken": token,
+                    "interval": "FIVE_MINUTE",
+                    "fromdate": from_date.strftime("%Y-%m-%d %H:%M"),
+                    "todate": to_date.strftime("%Y-%m-%d %H:%M")
+                }
+                
+                data = smartApi.getCandleData(hist_params)
+                
+                if data['status'] and data['data']:
+                    c_data = data['data']
+                    df = pd.DataFrame(c_data, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                    analysis = strategy.perform_analysis(df)
+                    if analysis:
+                        return { "symbol": symbol, "token": token, **analysis }
+            except Exception as e:
+                pass
+            return None
+
+        # ThreadPool 3 Workers
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_stock = {executor.submit(process_macd, item): item for item in scan_list}
+            for future in as_completed(future_to_stock):
+                res = future.result()
+                if res:
+                    results.append(res)
+            
+        # Sort results: Smallest Change First
+        results.sort(key=lambda x: x['macd_change'])
+        
+        return {"status": "success", "count": len(results), "data": results}
+
+    except Exception as e:
+        print(f"MACD Strategy Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- NEW API ENDPOINTS FOR SEARCH ---
 

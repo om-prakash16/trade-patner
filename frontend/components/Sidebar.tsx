@@ -39,6 +39,7 @@ export default function Sidebar() {
                 { name: "Insider Strategy", href: "/stocks/insider" },
                 { name: "Sector Scope", href: "/stocks/sector-scope" },
                 { name: "Swing Spectrum", href: "/stocks/swing" },
+                { name: "MACD Scanner", href: "/stocks/macd" },
                 { name: "Pro Analytics", href: "/pro" },
                 { name: "Find Stock", href: "/stocks/find" },
             ]
