@@ -1090,6 +1090,9 @@ def background_scanner():
                         # 2. Search in Cache
                         if not intraday_candles_cache: return None
                         
+                        best_candidate_time = None
+                        best_candidate_val = -1.0 if is_bullish else 999999.0
+                        
                         for candle in intraday_candles_cache:
                             # Timestamp parse
                             try:
@@ -1101,6 +1104,18 @@ def background_scanner():
                             c_high = candle[2]
                             c_low = candle[3]
                             
+                            # Update Best Candidate (Highest High for Bull, Lowest Low for Bear)
+                            # This is used as fallback if precise level isn't crossed (Data Mismatch)
+                            if is_bullish:
+                                if c_high > best_candidate_val:
+                                    best_candidate_val = c_high
+                                    best_candidate_time = c_time_full.replace("T", " ")[:16]
+                            else:
+                                if c_low < best_candidate_val:
+                                    best_candidate_val = c_low
+                                    best_candidate_time = c_time_full.replace("T", " ")[:16]
+
+                            # Strict Check
                             if is_bullish:
                                 if c_open >= level:
                                     print(f"DEBUG: {symbol} Bullish GAP UP > Level {level} @ {c_time} (Open:{c_open})")
@@ -1115,6 +1130,12 @@ def background_scanner():
                                 if c_low <= level: 
                                     print(f"DEBUG: {symbol} Bearish CROSS < Level {level} @ {c_time}")
                                     return c_time_full.replace("T", " ")[:16] 
+
+                        # If we finish loop and found no strict cross, return the BEST CANDIDATE time
+                        # This handles cases where Daily High > Level but Intraday High < Level (Data Discrepancy)
+                        if best_candidate_time:
+                            print(f"DEBUG: {symbol} Strict cross not found. Fallback to Best Time @ {best_candidate_time} (Val:{best_candidate_val})")
+                            return best_candidate_time
                         
                         print(f"DEBUG: {symbol} Breakout detected but precise intraday time NOT found in cache.")
                         return None
