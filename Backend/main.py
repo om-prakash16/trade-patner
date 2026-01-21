@@ -9,8 +9,7 @@ import pandas as pd
 import pandas_ta as ta # Ensure pandas_ta is available
 from swing_strategy import SwingStrategy
 from macd_strategy import MACDStrategy
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
+from bearish_macd_strategy import BearishMACDStrategy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from datetime import datetime, timedelta
@@ -842,6 +841,53 @@ def get_macd_stocks():
 
     except Exception as e:
         print(f"MACD Strategy Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- BEARISH MACD STRATEGY ENDPOINT ---
+@app.get("/strategies/bearish-macd")
+def get_bearish_macd_stocks():
+    try:
+        scanner = ScripMaster.get_instance()
+        fno_list = scanner.get_all_fno_tokens()
+        
+        if not fno_list:
+            return {"status": "error", "message": "Scrip Master not ready"}
+            
+        results = []
+        strategy = BearishMACDStrategy()
+        
+        # Parallel Scan
+        def process_bearish(item):
+            symbol = item['symbol']
+            token = item['token']
+            try:
+                to_date = datetime.now()
+                from_date = to_date - timedelta(days=5)
+                hist_params = {
+                    "exchange": "NSE", "symboltoken": token, "interval": "FIVE_MINUTE",
+                    "fromdate": from_date.strftime("%Y-%m-%d %H:%M"), "todate": to_date.strftime("%Y-%m-%d %H:%M")
+                }
+                data = smartApi.getCandleData(hist_params)
+                if data['status'] and data['data']:
+                    df = pd.DataFrame(data['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                    analysis = strategy.perform_analysis(df)
+                    if analysis: return { "symbol": symbol, "token": token, **analysis }
+            except: pass
+            return None
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_stock = {executor.submit(process_bearish, item): item for item in fno_list}
+            for future in as_completed(future_to_stock):
+                res = future.result()
+                if res: results.append(res)
+        
+        # Sort by Change (Most negative first)
+        results.sort(key=lambda x: x['macd_change']) 
+        
+        return {"status": "success", "count": len(results), "data": results}
+
+    except Exception as e:
+        print(f"Bearish MACD Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- NEW API ENDPOINTS FOR SEARCH ---

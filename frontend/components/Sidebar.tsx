@@ -21,7 +21,8 @@ import {
     LogOut,
     X,
     ChevronRight,
-    Search
+    Search,
+    BookOpen
 } from "lucide-react";
 import { useSidebar } from "@/context/SidebarContext";
 
@@ -40,6 +41,7 @@ export default function Sidebar() {
                 { name: "Sector Scope", href: "/stocks/sector-scope" },
                 { name: "Swing Spectrum", href: "/stocks/swing" },
                 { name: "MACD Scanner", href: "/stocks/macd" },
+                { name: "Bearish MACD", href: "/stocks/bearish" },
                 { name: "Pro Analytics", href: "/pro" },
                 { name: "Find Stock", href: "/stocks/find" },
             ]
@@ -70,6 +72,13 @@ export default function Sidebar() {
             icon: Radio,
             href: "/live",
             badge: "New"
+        },
+        {
+            title: "Resources",
+            icon: BookOpen,
+            items: [
+                { name: "User Guide", href: "/tutorial" },
+            ]
         }
     ];
 

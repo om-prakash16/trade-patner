@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { Activity, TrendingUp, Zap, Newspaper, ArrowRight, BarChart3, Clock, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { Activity, TrendingUp, Zap, Newspaper, ArrowRight, BarChart3, Clock, ArrowUpRight, ArrowDownRight, TrendingDown } from "lucide-react";
 
 export default function Dashboard() {
   const [indices, setIndices] = useState<any>({});
@@ -179,6 +179,26 @@ export default function Dashboard() {
                 <h2 className="text-2xl font-bold text-white mb-2 group-hover:text-blue-400 transition-colors">MACD Scanner</h2>
                 <p className="text-slate-400 text-sm">
                   Quiet momentum buildup (12:00 - 02:25).
+                </p>
+              </div>
+            </div>
+          </Link>
+
+          {/* Bearish MACD Scanner */}
+          <Link href="/stocks/bearish" className="group relative overflow-hidden bg-slate-900/40 rounded-3xl border border-slate-800 hover:bg-slate-900/60 hover:border-red-500/30 transition-all duration-300">
+            <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="p-8 h-full flex flex-col justify-between">
+              <div className="flex justify-between items-start">
+                <div className="p-3 bg-red-500/10 rounded-2xl border border-red-500/20">
+                  <TrendingDown className="w-8 h-8 text-red-500" />
+                </div>
+                <ArrowRight className="w-6 h-6 text-slate-600 group-hover:text-red-400 group-hover:translate-x-1 transition-transform" />
+              </div>
+
+              <div className="mt-8">
+                <h2 className="text-2xl font-bold text-white mb-2 group-hover:text-red-400 transition-colors">Bearish Scanner</h2>
+                <p className="text-slate-400 text-sm">
+                  Short opportunities (10:10 - 14:10).
                 </p>
               </div>
             </div>
