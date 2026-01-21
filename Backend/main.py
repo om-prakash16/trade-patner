@@ -51,6 +51,12 @@ smartApi = SmartConnect(api_key=os.getenv("ANGEL_API_KEY"))
 session_data = None
 sws = None # Global WebSocket Instance
 
+# --- STRATEGY CACHES (For Instant Load) ---
+swing_cache = []
+macd_cache = []
+bearish_cache = []
+last_scan_time = {"swing": None, "macd": None, "bearish": None}
+
 
 @app.get("/")
 def read_root():
@@ -785,110 +791,24 @@ def get_swing_stocks():
 # --- MACD STRATEGY ENDPOINT ---
 @app.get("/strategies/macd")
 def get_macd_stocks():
-    try:
-        scanner = ScripMaster.get_instance()
-        fno_list = scanner.get_all_fno_tokens()
-        
-        if not fno_list:
-            return {"status": "error", "message": "Scrip Master not ready"}
-            
-        results = []
-        strategy = MACDStrategy()
-        
-        # Scan ALL F&O stocks but in parallel
-        scan_list = fno_list
-        
-        def process_macd(item):
-            symbol = item['symbol']
-            token = item['token']
-            try:
-                # Need last ~5 days
-                to_date = datetime.now()
-                from_date = to_date - timedelta(days=5)
-                
-                hist_params = {
-                    "exchange": "NSE",
-                    "symboltoken": token,
-                    "interval": "FIVE_MINUTE",
-                    "fromdate": from_date.strftime("%Y-%m-%d %H:%M"),
-                    "todate": to_date.strftime("%Y-%m-%d %H:%M")
-                }
-                
-                data = smartApi.getCandleData(hist_params)
-                
-                if data['status'] and data['data']:
-                    c_data = data['data']
-                    df = pd.DataFrame(c_data, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-                    analysis = strategy.perform_analysis(df)
-                    if analysis:
-                        return { "symbol": symbol, "token": token, **analysis }
-            except Exception as e:
-                pass
-            return None
-
-        # ThreadPool 3 Workers
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_stock = {executor.submit(process_macd, item): item for item in scan_list}
-            for future in as_completed(future_to_stock):
-                res = future.result()
-                if res:
-                    results.append(res)
-            
-        # Sort results: Smallest Change First
-        results.sort(key=lambda x: x['macd_change'])
-        
-        return {"status": "success", "count": len(results), "data": results}
-
-    except Exception as e:
-        print(f"MACD Strategy Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    global macd_cache, last_scan_time
+    return {
+        "status": "success", 
+        "count": len(macd_cache), 
+        "data": macd_cache,
+        "last_updated": last_scan_time["macd"]
+    }
 
 # --- BEARISH MACD STRATEGY ENDPOINT ---
 @app.get("/strategies/bearish-macd")
 def get_bearish_macd_stocks():
-    try:
-        scanner = ScripMaster.get_instance()
-        fno_list = scanner.get_all_fno_tokens()
-        
-        if not fno_list:
-            return {"status": "error", "message": "Scrip Master not ready"}
-            
-        results = []
-        strategy = BearishMACDStrategy()
-        
-        # Parallel Scan
-        def process_bearish(item):
-            symbol = item['symbol']
-            token = item['token']
-            try:
-                to_date = datetime.now()
-                from_date = to_date - timedelta(days=5)
-                hist_params = {
-                    "exchange": "NSE", "symboltoken": token, "interval": "FIVE_MINUTE",
-                    "fromdate": from_date.strftime("%Y-%m-%d %H:%M"), "todate": to_date.strftime("%Y-%m-%d %H:%M")
-                }
-                data = smartApi.getCandleData(hist_params)
-                if data['status'] and data['data']:
-                    df = pd.DataFrame(data['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-                    analysis = strategy.perform_analysis(df)
-                    if analysis: return { "symbol": symbol, "token": token, **analysis }
-            except: pass
-            return None
-
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_stock = {executor.submit(process_bearish, item): item for item in fno_list}
-            for future in as_completed(future_to_stock):
-                res = future.result()
-                if res: results.append(res)
-        
-        # Sort by Change (Most negative first)
-        results.sort(key=lambda x: x['macd_change']) 
-        
-        return {"status": "success", "count": len(results), "data": results}
-
-    except Exception as e:
-        print(f"Bearish MACD Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    global bearish_cache, last_scan_time
+    return {
+        "status": "success", 
+        "count": len(bearish_cache), 
+        "data": bearish_cache,
+        "last_updated": last_scan_time["bearish"]
+    }
 
 # --- NEW API ENDPOINTS FOR SEARCH ---
 
@@ -1389,12 +1309,16 @@ def god_mode():
 
 @app.on_event("startup")
 def startup_event():
-    # Start Background Scanner
+    # Start Background Scanner (Metrics)
     global is_scanner_running
     if not is_scanner_running:
         is_scanner_running = True
         t = threading.Thread(target=background_scanner, daemon=True)
         t.start()
+        
+    # Start Strategy Scanner (Swing/MACD)
+    t_strat = threading.Thread(target=run_strategy_scanner, daemon=True)
+    t_strat.start()
     
     # Load Scrip Master
     try:
@@ -1402,6 +1326,86 @@ def startup_event():
         ScripMaster.get_instance() # Preload
     except Exception as e:
         logger.error(f"Failed to init ScripMaster: {e}")
+
+def run_strategy_scanner():
+    """Background thread to update Strategy Caches"""
+    global swing_cache, macd_cache, bearish_cache, last_scan_time
+    print("Strategy Scanner: Started")
+    
+    while True:
+        try:
+            scanner = ScripMaster.get_instance()
+            fno_list = scanner.get_all_fno_tokens()
+            if not fno_list:
+                time.sleep(5)
+                continue
+                
+            # 1. MACD (Bullish) Scan
+            temp_macd = []
+            macd_strat = MACDStrategy()
+            
+            def scan_macd(item):
+                to_date = datetime.now()
+                from_date = to_date - timedelta(days=5)
+                try:
+                    res = smartApi.getCandleData({
+                        "exchange": "NSE", "symboltoken": item['token'], "interval": "FIVE_MINUTE",
+                        "fromdate": from_date.strftime("%Y-%m-%d %H:%M"), "todate": to_date.strftime("%Y-%m-%d %H:%M")
+                    })
+                    if res and res.get('data'):
+                        df = pd.DataFrame(res['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                        analysis = macd_strat.perform_analysis(df)
+                        if analysis: return { "symbol": item['symbol'], "token": item['token'], **analysis }
+                except: pass
+                return None
+
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                futures = {ex.submit(scan_macd, x): x for x in fno_list}
+                for f in as_completed(futures):
+                    r = f.result()
+                    if r: temp_macd.append(r)
+            
+            temp_macd.sort(key=lambda x: x['macd_change'])
+            macd_cache = temp_macd
+            last_scan_time["macd"] = datetime.now().strftime("%H:%M:%S")
+            print(f"Strategy Scanner: Updated MACD ({len(macd_cache)} items)")
+            
+            # 2. Bearish MACD Scan
+            temp_bearish = []
+            bear_strat = BearishMACDStrategy()
+            
+            def scan_bearish(item):
+                to_date = datetime.now()
+                from_date = to_date - timedelta(days=5)
+                try:
+                    res = smartApi.getCandleData({
+                        "exchange": "NSE", "symboltoken": item['token'], "interval": "FIVE_MINUTE",
+                        "fromdate": from_date.strftime("%Y-%m-%d %H:%M"), "todate": to_date.strftime("%Y-%m-%d %H:%M")
+                    })
+                    if res and res.get('data'):
+                        df = pd.DataFrame(res['data'], columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                        analysis = bear_strat.perform_analysis(df)
+                        if analysis: return { "symbol": item['symbol'], "token": item['token'], **analysis }
+                except: pass
+                return None
+
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                futures = {ex.submit(scan_bearish, x): x for x in fno_list}
+                for f in as_completed(futures):
+                    r = f.result()
+                    if r: temp_bearish.append(r)
+            
+            temp_bearish.sort(key=lambda x: x['macd_change']) # Most negative first usually
+            bearish_cache = temp_bearish
+            last_scan_time["bearish"] = datetime.now().strftime("%H:%M:%S")
+            print(f"Strategy Scanner: Updated Bearish MACD ({len(bearish_cache)} items)")
+            
+            # Sleep 2 Minutes
+            time.sleep(120)
+            
+        except Exception as e:
+            print(f"Strategy Scanner Error: {e}")
+            time.sleep(30)
 
 @app.get("/options-chain/{symbol}")
 def get_options_chain(symbol: str):

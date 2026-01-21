@@ -67,7 +67,22 @@ export default function BearishMACDPage() {
             res = res.filter(item => item.symbol.toLowerCase().includes(searchTerm.toLowerCase()));
         }
 
-        // 2. Col Filters
+        // 2. Global Range Filter
+        if (rangeFilter !== "ALL") {
+            res = res.filter(item => {
+                const change = parseFloat(item.macd_change); // This is signed (e.g. -0.15)
+
+                // Logic for Negative Ranges
+                if (rangeFilter === "-0.01 to -0.05") return change <= -0.01 && change >= -0.05;
+                if (rangeFilter === "-0.05 to -0.1") return change < -0.05 && change >= -0.1;
+                if (rangeFilter === "-0.1 to -0.2") return change < -0.1 && change >= -0.2;
+                if (rangeFilter === "Deep (< -0.2)") return change < -0.2;
+
+                return true;
+            });
+        }
+
+        // 3. Col Filters
         Object.entries(colFilters).forEach(([field, criteria]) => {
             if (!criteria) return;
             res = res.filter(item => {
@@ -151,17 +166,38 @@ export default function BearishMACDPage() {
 
             {/* Controls */}
             <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
-                <div className="flex flex-col md:flex-row gap-4">
-                    {/* Search */}
-                    <div className="relative group w-full md:w-64">
-                        <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500 group-focus-within:text-red-400 transition-colors" />
-                        <input
-                            type="text"
-                            placeholder="Search symbol..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="pl-10 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-sm focus:outline-none focus:border-red-500/50 focus:ring-1 focus:ring-red-500/50 w-full transition-all"
-                        />
+                <div className="flex flex-col xl:flex-row gap-6 justify-between items-start xl:items-center">
+
+                    <div className="flex flex-col md:flex-row gap-4 w-full xl:w-auto">
+                        {/* Search */}
+                        <div className="relative group w-full md:w-64">
+                            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500 group-focus-within:text-red-400 transition-colors" />
+                            <input
+                                type="text"
+                                placeholder="Search symbol..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="pl-10 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-sm focus:outline-none focus:border-red-500/50 focus:ring-1 focus:ring-red-500/50 w-full transition-all"
+                            />
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                            {/* Range Filters */}
+                            <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
+                                {['ALL', '-0.01 to -0.05', '-0.05 to -0.1', '-0.1 to -0.2', 'Deep (< -0.2)'].map(r => (
+                                    <button
+                                        key={r}
+                                        onClick={() => setRangeFilter(r)}
+                                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${rangeFilter === r
+                                            ? 'bg-red-600 text-white shadow-sm'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                            }`}
+                                    >
+                                        {r === 'ALL' ? 'Any Range' : r}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                 </div>
 
