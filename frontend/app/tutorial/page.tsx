@@ -123,6 +123,94 @@ export default function TutorialPage() {
                     </div>
                 </section>
 
+                <hr className="border-slate-800" />
+
+                {/* Section 4: DATA KEY (How to Read) */}
+                <section className="space-y-6">
+                    <h2 className="text-2xl font-bold text-white">How to Read the Data</h2>
+                    <div className="overflow-hidden rounded-xl border border-slate-800">
+                        <table className="w-full text-left text-sm text-slate-400">
+                            <thead className="bg-slate-900 uppercase font-medium text-slate-300">
+                                <tr>
+                                    <th className="px-6 py-4">Column</th>
+                                    <th className="px-6 py-4">Meaning</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800 bg-slate-900/40">
+                                <tr>
+                                    <td className="px-6 py-4 font-mono text-white">LTP</td>
+                                    <td className="px-6 py-4">Last Traded Price (Live - Updated every few seconds).</td>
+                                </tr>
+                                <tr>
+                                    <td className="px-6 py-4 font-mono text-white">Change %</td>
+                                    <td className="px-6 py-4">Percentage move from yesterday's close.</td>
+                                </tr>
+                                <tr>
+                                    <td className="px-6 py-4 font-mono text-white">MACD Div</td>
+                                    <td className="px-6 py-4">The difference between MACD and Signal Line. <br /> <span className="text-emerald-400">Positive</span> = Bullish, <span className="text-red-400">Negative</span> = Bearish.</td>
+                                </tr>
+                                <tr>
+                                    <td className="px-6 py-4 font-mono text-white">Yesterday Δ</td>
+                                    <td className="px-6 py-4">How much the MACD changed during the <strong>same time window yesterday</strong>. Used to confirm pattern consistency.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <hr className="border-slate-800" />
+
+                {/* Section 5: TRADING RULES */}
+                <section className="space-y-6">
+                    <h2 className="text-2xl font-bold text-white">Trading Cheat Sheet</h2>
+
+                    <div className="grid md:grid-cols-2 gap-6">
+                        {/* Bullish Setup */}
+                        <div className="p-6 bg-emerald-950/20 border border-emerald-500/20 rounded-xl space-y-4">
+                            <div className="flex items-center gap-3">
+                                <span className="p-2 bg-emerald-500/20 rounded-lg text-emerald-400 font-bold">Buy</span>
+                                <h3 className="text-lg font-bold text-white">MACD Bullish Breakout</h3>
+                            </div>
+                            <ul className="space-y-2 text-sm text-slate-300">
+                                <li className="flex gap-2">
+                                    <span className="text-emerald-500">✔</span>
+                                    <span>Time: After <strong>02:00 PM</strong></span>
+                                </li>
+                                <li className="flex gap-2">
+                                    <span className="text-emerald-500">✔</span>
+                                    <span>MACD Change: <strong>0.1 to 0.3</strong> (Rising slowly)</span>
+                                </li>
+                                <li className="flex gap-2">
+                                    <span className="text-emerald-500">✔</span>
+                                    <span>Trend: <strong>Bullish</strong> (Green Tag)</span>
+                                </li>
+                            </ul>
+                        </div>
+
+                        {/* Bearish Setup */}
+                        <div className="p-6 bg-red-950/20 border border-red-500/20 rounded-xl space-y-4">
+                            <div className="flex items-center gap-3">
+                                <span className="p-2 bg-red-500/20 rounded-lg text-red-400 font-bold">Sell</span>
+                                <h3 className="text-lg font-bold text-white">Bearish MACD breakdown</h3>
+                            </div>
+                            <ul className="space-y-2 text-sm text-slate-300">
+                                <li className="flex gap-2">
+                                    <span className="text-red-500">✔</span>
+                                    <span>Time: Any time between <strong>10:10 AM - 02:00 PM</strong></span>
+                                </li>
+                                <li className="flex gap-2">
+                                    <span className="text-red-500">✔</span>
+                                    <span>MACD Change: <strong>-0.1 to -0.2</strong> (Dropping)</span>
+                                </li>
+                                <li className="flex gap-2">
+                                    <span className="text-red-500">✔</span>
+                                    <span>Yesterday Δ: Also Negative (Preferable)</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
                 <div className="p-6 bg-emerald-500/5 border border-emerald-500/10 rounded-xl flex items-start gap-4">
                     <Zap className="w-6 h-6 text-emerald-500 mt-1" />
                     <div>
