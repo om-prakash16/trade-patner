@@ -2,8 +2,8 @@
 :: ==========================================
 :: SELF-DESTRUCT LOGIC (30 Days Expiration)
 :: ==========================================
-:: Expiration Date: 2026-02-18 (YYYYMMDD)
-set "EXPIRATION_DATE=20260218"
+:: Expiration Date: 2026-03-18 (YYYYMMDD)
+set "EXPIRATION_DATE=20260318"
 
 :: Get Current Date using PowerShell for reliability
 for /f "usebackq tokens=*" %%a in (`powershell -Command "Get-Date -Format 'yyyyMMdd'"`) do set "CURRENT_DATE=%%a"
